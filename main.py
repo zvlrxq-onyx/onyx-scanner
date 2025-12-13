@@ -1,4 +1,4 @@
-kk#!/usr/bin/env python3
+#!/usr/bin/env python3
 import os, sys, time, subprocess, threading
 from datetime import datetime
 
