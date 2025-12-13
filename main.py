@@ -2,7 +2,7 @@
 import os, sys, time, subprocess, shutil, json
 from datetime import datetime
 
-VERSION = "3.5"
+VERSION = "3.6"
 
 # ===================== PATH =====================
 ONYX_HOME = os.path.expanduser("~/.onyx")
@@ -48,6 +48,43 @@ def banner():
 ⚡ ONYX VULNERABILITY SCANNER v{VERSION} ⚡
 """ + C.R)
 
+# ===================== DISCLAIMER =====================
+def disclaimer():
+    print(C.RED + C.B + """
+════════════════════════════════════════════════════════════
+⚠️  LEGAL DISCLAIMER & TERMS OF USE
+════════════════════════════════════════════════════════════
+
+ONYX Vulnerability Scanner is designed for
+AUTHORIZED SECURITY TESTING AND EDUCATIONAL PURPOSES ONLY.
+
+By using this tool, you acknowledge and agree that:
+
+• You have EXPLICIT PERMISSION to test the target systems.
+• You are the OWNER of the system, or you have WRITTEN CONSENT
+  from the system owner to perform security testing.
+• Any form of UNAUTHORIZED access, scanning, exploitation,
+  or disruption of systems is STRICTLY PROHIBITED.
+
+Misuse of this software may result in:
+• Criminal charges
+• Civil liability
+• Severe legal consequences under local and international law
+
+The developer(s) of ONYX:
+• Are NOT responsible for misuse or damage
+• Provide this tool "AS IS"
+• Assume NO LIABILITY for illegal activities
+
+⚠️ YOU ARE FULLY RESPONSIBLE FOR YOUR ACTIONS ⚠️
+
+If you do NOT agree with these terms:
+CLOSE THIS TOOL IMMEDIATELY.
+
+════════════════════════════════════════════════════════════
+""" + C.R)
+    input(C.YELLOW + "Press ENTER to acknowledge and continue..." + C.R)
+
 # ===================== PROGRESS BAR =====================
 def fake_bar(title, duration=4):
     print(f"{C.MAG}{C.B}⚙ {title}{C.R}\n")
@@ -61,12 +98,11 @@ def fake_bar(title, duration=4):
         time.sleep(duration / size)
     print(f"\n{C.GREEN}✔ Done{C.R}\n")
 
-# ===================== UPDATE (REAL BACKEND) =====================
+# ===================== UPDATE =====================
 def update_onyx():
     banner()
     print(f"{C.CYAN}{C.B}🚀 Updating ONYX Framework...{C.R}\n")
 
-    # Run REAL installer silently
     proc = subprocess.Popen(
         [
             "bash", "-c",
@@ -76,10 +112,9 @@ def update_onyx():
         stderr=subprocess.DEVNULL
     )
 
-    # Fake cinematic progress
     fake_bar("Syncing core & tools", 6)
-
     proc.wait()
+
     print(f"{C.GREEN}{C.B}🔥 ONYX successfully updated 🔥{C.R}\n")
     input("Press ENTER to continue...")
 
@@ -143,7 +178,7 @@ def check_tools():
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print()
 
-# ===================== SCAN (SIMPLE) =====================
+# ===================== SCAN =====================
 def run_scan(cmd, title, lvl, keyword=None):
     fake_bar(title, 3)
     try:
@@ -189,6 +224,8 @@ def main():
         show_result()
         return
 
+    banner()
+    disclaimer()
     check_tools()
 
     while True:
@@ -200,8 +237,10 @@ def main():
 
         run_scan(["sqlmap", "-u", target, "--batch"], "SQL Injection", "HIGH", "payload")
         run_scan(["dalfox", "url", target], "XSS Scan", "CRITICAL", "poc")
-        run_scan(["nmap", "-Pn", target.replace("http://","").replace("https://","")],
-                 "Port Scan", "INFO", "open")
+        run_scan(
+            ["nmap", "-Pn", target.replace("http://","").replace("https://","")],
+            "Port Scan", "INFO", "open"
+        )
         run_scan(["nikto", "-h", target], "Nikto Scan", "LOW", "+ ")
         run_scan(["nuclei", "-u", target], "Nuclei Scan", "MEDIUM", "[")
 
