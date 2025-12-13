@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-
-def main():
-    print("ONYX Vulnerability Scanner")
-    print("ONYX is running correctly 🚀")
-
-if __name__ == "__main__":
-    main()
+#!/bin/bash
+source "$HOME/onyx-scanner/venv/bin/activate"
+python "$HOME/onyx-scanner/main.py" "$@"
