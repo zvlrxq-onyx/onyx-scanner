@@ -1,46 +1,44 @@
 #!/bin/bash
-
-set -e
-
-echo "🔹 Installing ONYX Vulnerability Scanner..."
+# ───────────────────────────────────────────────
+# ONYX Vulnerability Scanner Installer (One-liner)
+# Author: zvlrxq-onyx
+# GitHub: https://github.com/zvlrxq-onyx/onyx-scanner
+# ───────────────────────────────────────────────
 
 INSTALL_DIR="$HOME/onyx-scanner"
 
-# Clone or update repo
+echo "🔹 Installing ONYX Vulnerability Scanner..."
+
+# Clone or update repository
 if [ -d "$INSTALL_DIR" ]; then
     echo "📁 ONYX directory already exists, updating..."
-    cd "$INSTALL_DIR"
-    git pull origin main
+    git -C "$INSTALL_DIR" pull
 else
     git clone https://github.com/zvlrxq-onyx/onyx-scanner.git "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
 fi
 
-# Python check
-if ! command -v python3 &> /dev/null; then
-    echo "❌ Python3 not found. Install Python first."
-    exit 1
-fi
+# Setup virtual environment
+cd "$INSTALL_DIR" || exit
+python3 -m venv venv
 
-# Virtual environment
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
-fi
-
+# Activate venv and install dependencies
 source venv/bin/activate
-
-# Install dependencies
+pip install --upgrade pip
 if [ -f "requirements.txt" ]; then
-    pip install --upgrade pip
     pip install -r requirements.txt
 else
-    echo "❌ requirements.txt not found!"
-    exit 1
+    echo "⚠️ requirements.txt not found, installing default dependencies..."
+    pip install requests beautifulsoup4 tqdm colorama rich
 fi
 
-# Create launcher
-sudo ln -sf "$INSTALL_DIR/main.py" /usr/local/bin/onyx
-sudo chmod +x /usr/local/bin/onyx
+# Create launcher script
+ONYX_BIN="/usr/local/bin/onyx"
+sudo tee $ONYX_BIN > /dev/null <<EOF
+#!/bin/bash
+source "$INSTALL_DIR/venv/bin/activate"
+python "$INSTALL_DIR/main.py" "\$@"
+EOF
+sudo chmod +x $ONYX_BIN
 
 echo "✅ ONYX installed successfully!"
 echo "🚀 Run with: onyx"
