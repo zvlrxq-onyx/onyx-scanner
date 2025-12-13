@@ -1,13 +1,13 @@
 # ONYX Vulnerability Scanner
 
-**ONYX** is a professional vulnerability scanner framework designed for educational and authorized security testing only.  
+**ONYX** is a vulnerability scanner framework designed for educational and authorized security testing only.  
 Unauthorized scanning of systems you do not own is illegal and unethical. Use responsibly.
 
 ---
 
 ## Features
 
-- 🚀 Full Scan (Subdomain → Alive → Auto Scan)
+- 🚀 Full Scan 
 - 🌐 Subdomain Discovery
 - 🧪 XSS Scan
 - 💉 SQL Injection Scan
