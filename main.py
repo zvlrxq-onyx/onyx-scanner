@@ -31,9 +31,9 @@ def banner():
 def disclaimer():
     print(f"""{RED}
 [!] DISCLAIMER
-This tool is for AUTHORIZED testing only.
-Use only on assets you own or legal labs.
-You are fully responsible for all actions.
+Authorized testing only!
+Use this tool ONLY on targets you own or have permission for.
+You are responsible for your actions.
 {RESET}""")
 
 def progress(title):
@@ -60,17 +60,21 @@ def run_tool(cmd):
         proc.wait()
         return output
     except FileNotFoundError:
-        return "[ERROR] Tool not found"
+        return "[ERROR] Tool not installed"
     except Exception as e:
         return str(e)
 
 def parse_severity(output):
     sev = {"low":0,"medium":0,"high":0,"critical":0}
     for line in output.lower().splitlines():
-        if "critical" in line: sev["critical"] += 1
-        elif "high" in line: sev["high"] += 1
-        elif "medium" in line: sev["medium"] += 1
-        elif "low" in line: sev["low"] += 1
+        if "critical" in line:
+            sev["critical"] += 1
+        elif "high" in line:
+            sev["high"] += 1
+        elif "medium" in line:
+            sev["medium"] += 1
+        elif "low" in line:
+            sev["low"] += 1
     return sev
 
 def merge(total, cur):
@@ -113,10 +117,10 @@ Risk Score  : {score}
 Status      : {status}
 
 Advice:
-- Patch critical & high issues
-- Validate all user input
+- Patch critical & high issues immediately
+- Validate all user inputs
 - Harden server configuration
-- Re-scan after fixes
+- Re-scan after mitigation
 
 ===================== END =======================
 {RESET}""")
@@ -130,9 +134,14 @@ def scan_xss(target):
 
 def scan_sql(target):
     progress("SQL Injection (SQLMap) --------------")
-    print(f"{YELLOW}[!] Enter SQLMap flags manually{RESET}")
-    flags = input("sqlmap flags > ")
-    cmd = ["sqlmap", "-u", target] + flags.split()
+    cmd = [
+        "sqlmap",
+        "-u", target,
+        "--dbs",
+        "--delay=1",
+        "--threads=1",
+        "--batch"
+    ]
     out = run_tool(cmd)
     return parse_severity(out)
 
@@ -162,7 +171,7 @@ def main():
     banner()
     disclaimer()
 
-    target = input(f"{YELLOW}TARGET URL:{RESET} ")
+    target = input(f"{YELLOW}TARGET URL:{RESET} ").strip()
 
     while True:
         print(f"""
@@ -175,7 +184,7 @@ def main():
 [0] Exit
 """)
 
-        c = input("ONYX > ")
+        c = input("ONYX > ").strip()
 
         if c == "1":
             final_report(target, scan_xss(target))
