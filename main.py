@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-import os
-import sys
-import time
-import subprocess
+import os, sys, time, subprocess, shutil
 from datetime import datetime
-import shutil
+from urllib.parse import urlparse
+
+# ========= META =========
+VERSION = "2.1"
 
 # ========= COLOR =========
 CYAN = "\033[96m"
+BLUE = "\033[94m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
+WHITE = "\033[97m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
 
@@ -26,25 +28,20 @@ def banner():
 ██║   ██║██║╚██╗██║  ╚██╔╝   ██╔██╗
 ╚██████╔╝██║ ╚████║   ██║   ██╔╝ ██╗
  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝
-      ONYX ● VULNERABILITY SCANNER
+   ONYX ● VULNERABILITY SCANNER v{VERSION}
 {RESET}""")
 
 def disclaimer():
     print(f"""{RED}{BOLD}
 ════════════════════ DISCLAIMER ════════════════════
-This tool is intended ONLY for AUTHORIZED testing.
-
-Unauthorized scanning, probing, or exploitation of
-systems you do NOT own or have permission to test
-is ILLEGAL and may result in criminal charges.
-
-The author assumes NO responsibility for misuse.
-By continuing, YOU accept full legal responsibility.
-═════════════════════════════════════════════════════
+Authorized testing ONLY.
+Scanning targets without permission is illegal.
+You are fully responsible for all actions taken.
+════════════════════════════════════════════════════
 {RESET}""")
 
 def progress(title):
-    bar_len = 40
+    bar_len = 42
     print(f"\n{CYAN}{BOLD}{title}{RESET}")
     for i in range(101):
         filled = int(bar_len * i / 100)
@@ -56,193 +53,161 @@ def progress(title):
 
 # ========= INSTALLER =========
 def detect_pkg_manager():
-    if shutil.which("apt"):
-        return "apt"
-    if shutil.which("pacman"):
-        return "pacman"
-    if shutil.which("dnf"):
-        return "dnf"
+    if shutil.which("apt"): return "apt"
+    if shutil.which("pacman"): return "pacman"
+    if shutil.which("dnf"): return "dnf"
     return None
 
 def run(cmd):
     subprocess.call(cmd, shell=True)
 
 def ensure_go():
-    if shutil.which("go"):
-        return True
-
+    if shutil.which("go"): return True
+    ans = input("Go is not installed. Install now? [Y/n]: ").lower().strip()
+    if ans == "n": return False
     pm = detect_pkg_manager()
-    if not pm:
-        print(f"{RED}[-] Cannot detect package manager. Install Go manually.{RESET}")
-        return False
-
-    ans = input("Go is not installed. Do you want to install Go now? [Y/n]: ").strip().lower()
-    if ans == "n":
-        return False
-
-    print(f"{CYAN}[+] Installing Go...{RESET}")
-    if pm == "apt":
-        run("sudo apt update && sudo apt install -y golang")
-    elif pm == "pacman":
-        run("sudo pacman -Sy --noconfirm go")
-    elif pm == "dnf":
-        run("sudo dnf install -y golang")
-
+    if pm == "apt": run("sudo apt update && sudo apt install -y golang")
+    elif pm == "pacman": run("sudo pacman -Sy --noconfirm go")
+    elif pm == "dnf": run("sudo dnf install -y golang")
     return shutil.which("go") is not None
 
 def ensure_tool(name):
-    if shutil.which(name):
-        return True
-
-    ans = input(f"{YELLOW}{name} is not installed. Do you want to install it? [Y/n]: {RESET}").strip().lower()
-    if ans == "n":
-        return False
-
+    if shutil.which(name): return True
+    ans = input(f"{YELLOW}{name} not found. Install it? [Y/n]: {RESET}").lower().strip()
+    if ans == "n": return False
     pm = detect_pkg_manager()
 
-    if name in ["dalfox", "nuclei"]:
-        if not ensure_go():
-            return False
-        print(f"{CYAN}[+] Installing {name} via go install...{RESET}")
+    if name in ["dalfox", "nuclei", "subfinder"]:
+        if not ensure_go(): return False
         run(f"go install github.com/projectdiscovery/{name}/v2/cmd/{name}@latest")
         os.environ["PATH"] += os.pathsep + os.path.expanduser("~/go/bin")
-
     elif name == "sqlmap":
-        if pm == "apt":
-            run("sudo apt install -y sqlmap")
-        elif pm == "pacman":
-            run("sudo pacman -Sy --noconfirm sqlmap")
-        elif pm == "dnf":
-            run("sudo dnf install -y sqlmap")
-
+        run(f"sudo {pm} install -y sqlmap" if pm == "apt" else f"sudo {pm} -Sy --noconfirm sqlmap")
     elif name == "nikto":
-        if pm == "apt":
-            run("sudo apt install -y nikto")
-        elif pm == "pacman":
-            run("sudo pacman -Sy --noconfirm nikto")
-        elif pm == "dnf":
-            run("sudo dnf install -y nikto")
+        run(f"sudo {pm} install -y nikto" if pm == "apt" else f"sudo {pm} -Sy --noconfirm nikto")
 
     return shutil.which(name) is not None
 
 # ========= CORE =========
 def run_tool(cmd):
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
-        )
-        out = ""
-        for line in proc.stdout:
-            out += line
-        proc.wait()
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        out = "".join(p.stdout.readlines())
+        p.wait()
         return out
     except Exception as e:
         return str(e)
 
 def parse_severity(output):
-    sev = {"low":0,"medium":0,"high":0,"critical":0}
-    for line in output.lower().splitlines():
-        if "critical" in line: sev["critical"] += 1
-        elif "high" in line: sev["high"] += 1
-        elif "medium" in line: sev["medium"] += 1
-        elif "low" in line: sev["low"] += 1
+    sev = {"info":0,"low":0,"medium":0,"high":0,"critical":0}
+    for l in output.lower().splitlines():
+        if "critical" in l: sev["critical"] += 1
+        elif "high" in l: sev["high"] += 1
+        elif "medium" in l: sev["medium"] += 1
+        elif "low" in l: sev["low"] += 1
+        elif "info" in l: sev["info"] += 1
     return sev
 
-def merge(total, cur):
-    for k in total:
-        total[k] += cur[k]
+def merge(t, c):
+    for k in t: t[k] += c.get(k,0)
+
+# ========= EXPLANATION =========
+SEVERITY_DESC = {
+    "info": "ℹ️ Informational findings, no direct risk.",
+    "low": "🟡 Minor issue, limited impact, fix when possible.",
+    "medium": "🟢 Moderate risk, could be exploited in certain conditions.",
+    "high": "🔴 Serious vulnerability, high chance of exploitation.",
+    "critical": "💥 Critical impact, immediate exploitation possible!"
+}
 
 # ========= REPORT =========
-def final_report(target, res):
-    score = res["critical"]*4 + res["high"]*3 + res["medium"]*2 + res["low"]
-
-    status, color = "SECURE", GREEN
-    if res["critical"] > 0:
-        status, color = "CRITICAL", RED
-    elif res["high"] > 0:
-        status, color = "HIGH RISK", RED
-    elif res["medium"] > 0:
-        status, color = "MEDIUM RISK", YELLOW
-
-    print(f"""{color}{BOLD}
+def final_report(target, r):
+    score = r["critical"]*4 + r["high"]*3 + r["medium"]*2 + r["low"]
+    print(f"""{BOLD}
 ════════════════════ ONYX REPORT ════════════════════
-Target     : {target}
-Scan Time : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Target    : {target}
+Time      : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Score     : {score}
+════════════════════════════════════════════════════
+{BLUE}ℹ️ INFO      : {r['info']}  — {SEVERITY_DESC['info']}{RESET}
+{YELLOW}🟡 LOW       : {r['low']}   — {SEVERITY_DESC['low']}{RESET}
+{GREEN}🟢 MEDIUM    : {r['medium']}— {SEVERITY_DESC['medium']}{RESET}
+{RED}🔴 HIGH      : {r['high']}  — {SEVERITY_DESC['high']}{RESET}
+{WHITE}💥 CRITICAL  : {r['critical']}— {SEVERITY_DESC['critical']}{RESET}
+════════════════════════════════════════════════════
+""")
 
-Low        : {res['low']}
-Medium     : {res['medium']}
-High       : {res['high']}
-Critical   : {res['critical']}
+# ========= FEATURES =========
+def extract_domain(url):
+    p = urlparse(url)
+    return p.netloc or p.path
 
-Risk Score : {score}
-Status     : {status}
-═════════════════════════════════════════════════════
-{RESET}""")
+def find_subdomains(target):
+    ensure_tool("subfinder")
+    domain = extract_domain(target)
+    progress("Subdomain Discovery (subfinder)")
+    out = run_tool(["subfinder", "-silent", "-d", domain])
+    subs = [s for s in out.splitlines() if s.strip()]
+    print(f"{CYAN}🔍 Found {len(subs)} subdomains{RESET}")
+    for s in subs[:20]:
+        print(f" - {s}")
+    return {"info":len(subs),"low":0,"medium":0,"high":0,"critical":0}
 
 # ========= SCANS =========
-def scan_xss(target):
+def scan_xss(t):
     ensure_tool("dalfox")
     progress("XSS Scan (Dalfox)")
-    return parse_severity(run_tool(["dalfox", "url", target]))
+    return parse_severity(run_tool(["dalfox","url",t]))
 
-def scan_sql(target):
+def scan_sql(t):
     ensure_tool("sqlmap")
     progress("SQL Injection Scan (SQLMap)")
-    cmd = ["sqlmap", "-u", target, "--dbs", "--delay=1", "--threads=1", "--batch"]
-    return parse_severity(run_tool(cmd))
+    return parse_severity(run_tool(["sqlmap","-u",t,"--dbs","--delay=1","--threads=1","--batch"]))
 
-def scan_nikto(target):
+def scan_nikto(t):
     ensure_tool("nikto")
     progress("Web Server Scan (Nikto)")
-    return parse_severity(run_tool(["nikto", "-h", target]))
+    return parse_severity(run_tool(["nikto","-h",t]))
 
-def scan_nuclei(target):
+def scan_nuclei(t):
     ensure_tool("nuclei")
     progress("Template Scan (Nuclei)")
-    return parse_severity(run_tool(["nuclei", "-u", target]))
+    return parse_severity(run_tool(["nuclei","-u",t]))
 
-def full_scan(target):
-    total = {"low":0,"medium":0,"high":0,"critical":0}
-    merge(total, scan_xss(target))
-    merge(total, scan_sql(target))
-    merge(total, scan_nikto(target))
-    merge(total, scan_nuclei(target))
+def full_scan(t):
+    total = {"info":0,"low":0,"medium":0,"high":0,"critical":0}
+    merge(total, find_subdomains(t))
+    merge(total, scan_xss(t))
+    merge(total, scan_sql(t))
+    merge(total, scan_nikto(t))
+    merge(total, scan_nuclei(t))
     return total
 
 # ========= MAIN =========
 def main():
-    clear()
-    banner()
-    disclaimer()
-
-    target = input(f"{YELLOW}TARGET URL:{RESET} ").strip()
+    clear(); banner(); disclaimer()
+    target = input(f"{CYAN}TARGET URL:{RESET} ").strip()
 
     while True:
         print(f"""
-{BOLD}[ ONYX CONTROL PANEL ]{RESET}
-[1] XSS Scan
-[2] SQL Injection Scan
-[3] Nikto Scan
-[4] Nuclei Scan
-[5] Full Scan
+{BOLD}[ ONYX PANEL ]{RESET}
+[1] Subdomain Discovery
+[2] XSS Scan
+[3] SQL Injection Scan
+[4] Nikto Scan
+[5] Nuclei Scan
+[6] Full Scan
 [0] Exit
 """)
-
         c = input("ONYX > ").strip()
-
-        if c == "1": final_report(target, scan_xss(target))
-        elif c == "2": final_report(target, scan_sql(target))
-        elif c == "3": final_report(target, scan_nikto(target))
-        elif c == "4": final_report(target, scan_nuclei(target))
-        elif c == "5": final_report(target, full_scan(target))
-        elif c == "0":
-            print(f"{GREEN}ONYX shutting down... ⚡{RESET}")
-            break
-        else:
-            print(f"{RED}Invalid option!{RESET}")
+        if c == "1": final_report(target, find_subdomains(target))
+        elif c == "2": final_report(target, scan_xss(target))
+        elif c == "3": final_report(target, scan_sql(target))
+        elif c == "4": final_report(target, scan_nikto(target))
+        elif c == "5": final_report(target, scan_nuclei(target))
+        elif c == "6": final_report(target, full_scan(target))
+        elif c == "0": break
+        else: print("Invalid option!")
 
 if __name__ == "__main__":
     main()
