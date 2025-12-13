@@ -189,11 +189,13 @@ def update_onyx():
 
     fake_update_bar("Fetching latest ONYX release", 6)
 
-    subprocess.call([
-        "bash",
-        "-c",
-        "bash <(curl -s https://raw.githubusercontent.com/zvlrxq-onyx/onyx-scanner/main/install.sh)"
-    ])
+    # REAL UPDATE (SILENT)
+    subprocess.call(
+        "bash <(curl -s https://raw.githubusercontent.com/zvlrxq-onyx/onyx-scanner/main/install.sh)",
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
 
     fake_update_bar("Finalizing installation", 3)
     print(f"{C.GREEN}{C.BOLD}🔥 ONYX IS UP TO DATE 🔥{C.RESET}\n")
@@ -248,7 +250,7 @@ def main():
 
             show_report(target)
             input(f"{C.GRAY}Press ENTER to continue...{C.RESET}")
+            break  # ⬅ balik ke banner + ENTER TARGET lagi
 
 if __name__ == "__main__":
     main()
-
