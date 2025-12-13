@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import os, sys, time, subprocess, shutil, re
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, urlencode
 
-VERSION = "2.4"
+VERSION = "2.5"
 
 # ========= COLORS =========
 CYAN="\033[96m"; BLUE="\033[94m"; GREEN="\033[92m"
@@ -27,22 +27,23 @@ def banner():
 
 def disclaimer():
     print(f"""{RED}{BOLD}
-════════════════════ DISCLAIMER ════════════════════
+════════════════════════════════════════════════════
 AUTHORIZED SECURITY TESTING ONLY.
 Illegal scanning is prohibited.
+Use only on assets you own or have permission to test.
 You are fully responsible for misuse.
 ════════════════════════════════════════════════════
 {RESET}""")
 
 def progress(title):
-    size=45
+    size=50
     print(f"\n{CYAN}{BOLD}{title}{RESET}")
     for i in range(101):
         fill=int(size*i/100)
         bar="█"*fill+"░"*(size-fill)
         sys.stdout.write(f"\r[{bar}] {i}%")
         sys.stdout.flush()
-        time.sleep(0.02)
+        time.sleep(0.01)
     print()
 
 # ========= INSTALL =========
@@ -70,21 +71,16 @@ def ensure_tool(name):
     ans=input(f"{YELLOW}{name} not found. Install it? [Y/n]: {RESET}").lower().strip()
     if ans=="n": return False
     pm=detect_pm()
-
     if name in ["dalfox","nuclei","subfinder"]:
         if not ensure_go(): return False
         run(f"go install github.com/projectdiscovery/{name}/v2/cmd/{name}@latest")
         os.environ["PATH"]+=os.pathsep+os.path.expanduser("~/go/bin")
-
     elif name=="sqlmap":
         run("sudo apt install -y sqlmap" if pm=="apt" else f"sudo {pm} -Sy --noconfirm sqlmap")
-
     elif name=="nikto":
         run("sudo apt install -y nikto" if pm=="apt" else f"sudo {pm} -Sy --noconfirm nikto")
-
     elif name=="nmap":
         run("sudo apt install -y nmap" if pm=="apt" else f"sudo {pm} -Sy --noconfirm nmap")
-
     return shutil.which(name) is not None
 
 # ========= CORE =========
@@ -110,6 +106,9 @@ def extract_domain(url):
     p=urlparse(url)
     return p.netloc or p.path
 
+def merge(a,b):
+    for k in a: a[k]+=b[k]
+
 # ========= SCANS =========
 def scan_subdomain(target):
     res=empty_result()
@@ -118,8 +117,7 @@ def scan_subdomain(target):
     out=run_tool(["subfinder","-silent","-d",extract_domain(target)])
     for s in out.splitlines():
         res["info"].append(f"Discovered subdomain: {s}")
-    if not res["info"]:
-        res["info"].append("No subdomains found")
+    if not res["info"]: res["info"].append("No subdomains found")
     return res
 
 def scan_nmap(target):
@@ -130,21 +128,18 @@ def scan_nmap(target):
     for l in out.splitlines():
         if "/tcp" in l and "open" in l:
             res["info"].append(f"Open service: {l.strip()}")
-    if not res["info"]:
-        res["info"].append("No open TCP services detected")
+    if not res["info"]: res["info"].append("No open TCP services detected")
     return res
 
 def scan_xss(target):
     res=empty_result()
     if not ensure_tool("dalfox"): return res
     progress("XSS Scan (Dalfox)")
-    out=run_tool(["dalfox","url",target,"--silence"])
+    out=run_tool(["dalfox","url",target,"--blind","--all","--silence"])
     for l in out.splitlines():
         ll=l.lower()
-        if "found" in ll and "xss" in ll:
-            res["high"].append(l.strip())
-        elif "reflected" in ll:
-            res["medium"].append(l.strip())
+        if "found" in ll and "xss" in ll: res["high"].append(l.strip())
+        elif "reflected" in ll: res["medium"].append(l.strip())
     if not res["high"] and not res["medium"]:
         res["info"].append("No XSS detected by Dalfox")
     return res
@@ -155,14 +150,13 @@ def scan_sql(target):
     progress("SQL Injection Scan (SQLMap)")
     out=run_tool([
         "sqlmap","-u",target,"--batch",
-        "--level=2","--risk=2","--threads=1","--delay=1"
+        "--level=5","--risk=3","--threads=1","--delay=1",
+        "--technique=BEUSTQ"
     ])
     for l in out.splitlines():
         ll=l.lower()
-        if "parameter" in ll and "vulnerable" in ll:
-            res["critical"].append(l.strip())
-        elif "sql injection" in ll:
-            res["high"].append(l.strip())
+        if "parameter" in ll and "vulnerable" in ll: res["critical"].append(l.strip())
+        elif "sql injection" in ll: res["high"].append(l.strip())
     if not res["critical"] and not res["high"]:
         res["info"].append("No SQL Injection detected by SQLMap")
     return res
@@ -173,10 +167,8 @@ def scan_nikto(target):
     progress("Web Server Scan (Nikto)")
     out=run_tool(["nikto","-h",target])
     for l in out.splitlines():
-        if "header" in l.lower():
-            res["low"].append(l.strip())
-    if not res["low"]:
-        res["info"].append("No low-risk web misconfigurations found")
+        if "header" in l.lower(): res["low"].append(l.strip())
+    if not res["low"]: res["info"].append("No low-risk web misconfigurations found")
     return res
 
 def scan_nuclei(target):
@@ -190,12 +182,8 @@ def scan_nuclei(target):
         elif "[high]" in ll: res["high"].append(l.strip())
         elif "[medium]" in ll: res["medium"].append(l.strip())
         elif "[low]" in ll: res["low"].append(l.strip())
-    if not any(res.values()):
-        res["info"].append("No vulnerabilities detected by Nuclei")
+    if not any(res.values()): res["info"].append("No vulnerabilities detected by Nuclei")
     return res
-
-def merge(a,b):
-    for k in a: a[k]+=b[k]
 
 def full_scan(target):
     total=empty_result()
@@ -206,8 +194,7 @@ def full_scan(target):
 # ========= REPORT =========
 def show(title,color,emoji,items):
     print(f"{color}{emoji} {title} ({len(items)} findings){RESET}")
-    for i in items:
-        print(f"   - {i}")
+    for i in items: print(f"   - {i}")
 
 def final_report(target,r):
     print(f"""{BOLD}
