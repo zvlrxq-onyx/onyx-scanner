@@ -1,0 +1,120 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<title>ONYX Vulnerability Report</title>
+<style>
+body { background:#0b0f14; color:#e6f1ff; font-family:Arial; }
+h1 { color:#00ffff; }
+table { width:100%; border-collapse:collapse; }
+th,td { padding:10px; border:1px solid #222; }
+.critical { background:#5a0000; }
+.high { background:#7a2e00; }
+.medium { background:#7a6a00; }
+.low { background:#0f3d2e; }
+</style>
+</head>
+<body>
+<h1>ONYX Vulnerability Report</h1>
+<p><b>Target:</b> http://testphp.vulnweb.com/listproducts.php?cat=1</p>
+<p><b>Date:</b> 2025-12-13 14:10:26.219360</p>
+
+<h2>Risk Summary</h2>
+<ul>
+<li>CRITICAL: 1</li>
+<li>HIGH: 0</li>
+<li>MEDIUM: 1</li>
+<li>LOW: 12</li>
+</ul>
+
+<h2>Findings</h2>
+<table>
+<tr><th>Severity</th><th>Issue</th><th>Scan</th></tr>
+
+        <tr class="medium">
+            <td>MEDIUM</td>
+            <td>XSS Vulnerability</td>
+            <td>Dalfox</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ Target IP:          44.228.249.3</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ Target Hostname:    testphp.vulnweb.com</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ Target Port:        80</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ Start Time:         2025-12-13 14:08:30 (GMT7)</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ Server: nginx/1.19.0</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ /listproducts.php/: The anti-clickjacking X-Frame-Options header is not present. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ /listproducts.php/: The X-Content-Type-Options header is not set. This could allow the user agent to render the content of the site in a different fashion to the MIME type. See: https://www.netsparker.com/web-vulnerability-scanner/vulnerabilities/missing-content-type-header/</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ /listproducts.php/EIR1Hseg.php#: Retrieved x-powered-by header: PHP/5.6.40-38+ubuntu20.04.1+deb.sury.org+1.</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ No CGI Directories found (use '-C all' to force check all possible dirs)</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ Scan terminated: 20 error(s) and 3 item(s) reported on remote host</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ End Time:           2025-12-13 14:10:24 (GMT7) (114 seconds)</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="low">
+            <td>LOW</td>
+            <td>+ 1 host(s) tested</td>
+            <td>Nikto Scan</td>
+        </tr>
+        
+        <tr class="critical">
+            <td>CRITICAL</td>
+            <td>SQL Injection</td>
+            <td>SQL Injection Scan</td>
+        </tr>
+        
+</table>
+</body>
+</html>

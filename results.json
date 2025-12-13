@@ -1,0 +1,72 @@
+[
+  {
+    "tool": "Dalfox",
+    "name": "XSS Vulnerability",
+    "severity": "medium"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ Target IP:          44.228.249.3",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ Target Hostname:    testphp.vulnweb.com",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ Target Port:        80",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ Start Time:         2025-12-13 14:08:30 (GMT7)",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ Server: nginx/1.19.0",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ /listproducts.php/: The anti-clickjacking X-Frame-Options header is not present. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ /listproducts.php/: The X-Content-Type-Options header is not set. This could allow the user agent to render the content of the site in a different fashion to the MIME type. See: https://www.netsparker.com/web-vulnerability-scanner/vulnerabilities/missing-content-type-header/",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ /listproducts.php/EIR1Hseg.php#: Retrieved x-powered-by header: PHP/5.6.40-38+ubuntu20.04.1+deb.sury.org+1.",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ No CGI Directories found (use '-C all' to force check all possible dirs)",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ Scan terminated: 20 error(s) and 3 item(s) reported on remote host",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ End Time:           2025-12-13 14:10:24 (GMT7) (114 seconds)",
+    "severity": "low"
+  },
+  {
+    "tool": "Nikto Scan",
+    "name": "+ 1 host(s) tested",
+    "severity": "low"
+  },
+  {
+    "tool": "SQL Injection Scan",
+    "name": "SQL Injection",
+    "severity": "critical"
+  }
+]
