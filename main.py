@@ -1,23 +1,13 @@
 #!/usr/bin/env python3
-import os
-import sys
-import time
-import subprocess
+import os, sys, time, subprocess
 from datetime import datetime
 
 # ========= COLORS =========
-CYAN = "\033[96m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-WHITE = "\033[97m"
-BOLD = "\033[1m"
-RESET = "\033[0m"
+CYAN="\033[96m"; GREEN="\033[92m"; YELLOW="\033[93m"
+RED="\033[91m"; BOLD="\033[1m"; RESET="\033[0m"
 
 # ========= UI =========
-def clear():
-    os.system("clear" if os.name != "nt" else "cls")
+def clear(): os.system("clear" if os.name!="nt" else "cls")
 
 def banner():
     print(f"""{CYAN}{BOLD}
@@ -27,205 +17,131 @@ def banner():
 ██║   ██║██║╚██╗██║  ╚██╔╝   ██╔██╗
 ╚██████╔╝██║ ╚████║   ██║   ██╔╝ ██╗
  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝
-   ONYX ● VULNERABILITY SCANNER v2.7
+   ONYX ● VULNERABILITY SCANNER v2.8 AGGRESSIVE
 {RESET}""")
 
 def disclaimer():
-    print(f"""{BLUE}{BOLD}
-════════════════════════════════════════════════════
-AUTHORIZED SECURITY TESTING ONLY.
-Use only on assets you own or have permission for.
-You are responsible for any misuse.
-════════════════════════════════════════════════════
+    print(f"""{YELLOW}
+AUTHORIZED SECURITY TESTING ONLY
+Use only on assets you own or have permission for
 {RESET}""")
 
 # ========= SMART PROGRESS =========
-def smart_progress(proc, title):
-    width = 40
-    percent = 0
-    print(f"{CYAN}{BOLD}{title}{RESET}")
+def progress(proc, title):
+    width=40; pct=0
+    print(f"{CYAN}{title}{RESET}")
     while proc.poll() is None:
-        percent = min(percent + 1, 95)
-        filled = int(width * percent / 100)
-        bar = "█" * filled + "░" * (width - filled)
-        sys.stdout.write(f"\r[{bar}] {percent}% running...")
+        pct=min(pct+1,95)
+        bar="█"*int(width*pct/100)+"░"*(width-int(width*pct/100))
+        sys.stdout.write(f"\r[{bar}] {pct}%")
         sys.stdout.flush()
         time.sleep(0.4)
-    sys.stdout.write(f"\r[{'█'*width}] 100% completed ✔️\n")
+    print(f"\r[{'█'*width}] 100% ✔️")
 
-# ========= RUN TOOL =========
-def run_tool(cmd, title):
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True
-    )
-    smart_progress(proc, title)
-    output = proc.communicate()[0]
-    return output
+# ========= RUN =========
+def run(cmd, title):
+    proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+    progress(proc,title)
+    return proc.communicate()[0]
 
-# ========= PARSER (FIXED) =========
-def parse_severity(output, tool):
-    sev = {"info": [], "low": [], "medium": [], "high": [], "critical": []}
+# ========= PARSER =========
+def parse_sql(out):
+    sev={"critical":[], "high":[], "medium":[], "low":[]}
 
-    for line in output.splitlines():
-        l = line.lower().strip()
+    for l in out.splitlines():
+        s=l.lower().strip()
 
-        # Skip noise
-        if not l or l.startswith(("__", "|_", "[*] starting", "[*] ending")):
+        if not s or s.startswith(("[*]","[info] starting","___","|_")):
             continue
 
-        # ===== SQLMAP =====
-        if tool == "sql":
-            if any(k in l for k in [
-                "boolean-based blind",
-                "error-based",
-                "time-based blind",
-                "union query",
-                "available databases"
-            ]):
-                sev["critical"].append(line)
+        if any(k in s for k in [
+            "available databases",
+            "union query",
+            "boolean-based blind",
+            "error-based",
+            "time-based blind"
+        ]):
+            sev["critical"].append(l)
 
-            elif any(k in l for k in [
-                "payload:",
-                "parameter:",
-                "back-end dbms"
-            ]):
-                sev["high"].append(line)
+        elif "payload:" in s or "parameter:" in s or "back-end dbms" in s:
+            sev["high"].append(l)
 
-            elif "xss" in l:
-                sev["medium"].append(line)
+        elif "xss" in s:
+            sev["medium"].append(l)
 
-            elif "[warning]" in l:
-                sev["low"].append(line)
-
-            else:
-                pass  # ignore sqlmap banner/log spam
-
-        # ===== DALFOX =====
-        elif tool == "xss":
-            if "stored xss" in l:
-                sev["high"].append(line)
-            elif "reflected xss" in l:
-                sev["medium"].append(line)
-            elif "xss" in l:
-                sev["medium"].append(line)
-
-        # ===== NIKTO / NUCLEI =====
-        elif tool in ("nikto", "nuclei"):
-            if "critical" in l:
-                sev["critical"].append(line)
-            elif "high" in l:
-                sev["high"].append(line)
-            elif "medium" in l:
-                sev["medium"].append(line)
-            elif "missing" in l:
-                sev["low"].append(line)
-
-        # ===== NMAP =====
-        elif tool == "nmap":
-            if "open" in l:
-                sev["info"].append(f"Open service: {line}")
+        elif "warning" in s:
+            sev["low"].append(l)
 
     return sev
 
-def merge(dst, src):
-    for k in dst:
-        dst[k].extend(src[k])
+def parse_xss(out):
+    sev={"critical":[], "high":[], "medium":[], "low":[]}
+    for l in out.splitlines():
+        s=l.lower()
+        if "stored xss" in s:
+            sev["high"].append(l)
+        elif "reflected xss" in s:
+            sev["medium"].append(l)
+    return sev
 
 # ========= SCANS =========
 def scan_sql(target):
-    cmd = [
-        "sqlmap", "-u", target,
-        "--batch", "--level=5", "--risk=3",
-        "--dbs", "--random-agent",
-        "--answers=follow=N"
+    cmd=[
+        "sqlmap","-u",target,
+        "--batch","--level=5","--risk=3",
+        "--dbs","--random-agent",
+        "--threads=1"
     ]
-    out = run_tool(cmd, "SQL Injection Scan (SQLMap)")
-    return parse_severity(out, "sql")
+    out=run(cmd,"SQL Injection Scan (AGGRESSIVE)")
+    return parse_sql(out)
 
 def scan_xss(target):
-    out = run_tool(
-        ["dalfox", "url", target, "--auto"],
-        "XSS Scan (Dalfox)"
-    )
-    return parse_severity(out, "xss")
-
-def scan_nikto(target):
-    out = run_tool(["nikto", "-h", target], "Nikto Scan")
-    return parse_severity(out, "nikto")
-
-def scan_nmap(target):
-    out = run_tool(["nmap", "-Pn", target], "Port Scan (Nmap)")
-    return parse_severity(out, "nmap")
+    out=run(["dalfox","url",target,"--auto"],"XSS Scan (AGGRESSIVE)")
+    return parse_xss(out)
 
 # ========= REPORT =========
 def report(target, sev):
-    print(f"\n{BOLD}════════════════════ ONYX REPORT ════════════════════{RESET}")
+    print(f"\n{BOLD}════════════ ONYX REPORT ════════════{RESET}")
     print(f"Target : {target}")
-    print(f"Time   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("════════════════════════════════════════════════════\n")
+    print(f"Time   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     print(f"💥 CRITICAL ({len(sev['critical'])})")
-    for i in sev["critical"]:
-        print(f"   - {i}")
+    for i in sev["critical"]: print(f"   - {i}")
 
     print(f"\n🔴 HIGH ({len(sev['high'])})")
-    for i in sev["high"]:
-        print(f"   - {i}")
+    for i in sev["high"]: print(f"   - {i}")
 
     print(f"\n🟢 MEDIUM ({len(sev['medium'])})")
-    for i in sev["medium"]:
-        print(f"   - {i}")
+    for i in sev["medium"]: print(f"   - {i}")
 
     print(f"\n🟡 LOW ({len(sev['low'])})")
-    for i in sev["low"]:
-        print(f"   - {i}")
-
-    print()
+    for i in sev["low"]: print(f"   - {i}")
 
 # ========= MAIN =========
 def main():
-    clear()
-    banner()
-    disclaimer()
-
-    target = input(f"{YELLOW}TARGET URL:{RESET} ").strip()
+    clear(); banner(); disclaimer()
+    target=input("TARGET URL: ").strip()
 
     while True:
-        print(f"""
-{BOLD}[ ONYX PANEL ]{RESET}
-[1] SQL Injection Scan
-[2] XSS Scan
-[3] Port Scan (Nmap)
-[4] Nikto Scan
-[5] Full Scan
+        print("""
+[1] SQL Injection Scan (AGGRESSIVE)
+[2] XSS Scan (AGGRESSIVE)
+[3] Full Scan
 [0] Exit
 """)
+        c=input("ONYX > ").strip()
 
-        c = input("ONYX > ").strip()
-
-        if c == "1":
+        if c=="1":
             report(target, scan_sql(target))
-        elif c == "2":
+        elif c=="2":
             report(target, scan_xss(target))
-        elif c == "3":
-            report(target, scan_nmap(target))
-        elif c == "4":
-            report(target, scan_nikto(target))
-        elif c == "5":
-            total = {"info": [], "low": [], "medium": [], "high": [], "critical": []}
-            merge(total, scan_sql(target))
-            merge(total, scan_xss(target))
-            merge(total, scan_nmap(target))
-            merge(total, scan_nikto(target))
-            report(target, total)
-        elif c == "0":
-            print(f"{GREEN}Exiting ONYX... ⚡{RESET}")
+        elif c=="3":
+            total={"critical":[], "high":[], "medium":[], "low":[]}
+            for s in (scan_sql(target), scan_xss(target)):
+                for k in total: total[k]+=s[k]
+            report(target,total)
+        elif c=="0":
             break
-        else:
-            print(f"{RED}Invalid option{RESET}")
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
