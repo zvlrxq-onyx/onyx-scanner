@@ -1,55 +1,26 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# ONYX Installer Script
 
-set -e
+echo "🔹 Installing ONYX Vulnerability Scanner..."
 
-echo "[+] Installing ONYX Vulnerability Scanner"
+# Clone the repo
+git clone https://github.com/zvlrxq-onyx/onyx-scanner.git ~/onyx-scanner
 
-# Check Python
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "[-] Python3 not found. Please install Python 3.9+"
-  exit 1
-fi
+# Go to folder
+cd ~/onyx-scanner || exit
 
-# Clone repo
-INSTALL_DIR="$HOME/.onyx"
-if [ -d "$INSTALL_DIR" ]; then
-  echo "[!] ONYX already exists at $INSTALL_DIR"
-else
-  git clone https://github.com/zvlrxq-onyx/onyx-scanner.git "$INSTALL_DIR"
-fi
-
-cd "$INSTALL_DIR"
-
-# Create venv
+# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# Install python deps
-pip install --upgrade pip
+# Install dependencies
 pip install -r requirements.txt
 
-# Make executable
+# Make main.py executable
 chmod +x main.py
 
-# Create launcher
-cat <<EOF > onyx
-#!/usr/bin/env bash
-source "$INSTALL_DIR/venv/bin/activate"
-python "$INSTALL_DIR/main.py"
-EOF
+# Add a command 'onyx' to PATH
+echo 'alias onyx="~/onyx-scanner/venv/bin/python ~/onyx-scanner/main.py"' >> ~/.bashrc
+source ~/.bashrc
 
-chmod +x onyx
-
-# Install globally
-mkdir -p ~/.local/bin
-cp onyx ~/.local/bin/
-
-# PATH check
-if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-  echo 'export PATH=$HOME/.local/bin:$PATH' >> ~/.bashrc
-fi
-
-echo ""
-echo "[✓] ONYX installed successfully!"
-echo "[✓] Restart terminal or run: source ~/.bashrc"
-echo "[✓] Run tool using: onyx"
+echo "✅ ONYX installed! Type 'onyx' to run it."
