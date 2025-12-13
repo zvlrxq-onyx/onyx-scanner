@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-import os, sys, time, subprocess
+import os, sys, subprocess, time
 from datetime import datetime
+from urllib.parse import urlparse
 
-# ========= COLORS =========
+# ================= COLORS =================
 CYAN="\033[96m"; GREEN="\033[92m"; YELLOW="\033[93m"
-RED="\033[91m"; BOLD="\033[1m"; RESET="\033[0m"
+RED="\033[91m"; BLUE="\033[94m"; BOLD="\033[1m"
+RESET="\033[0m"; WHITE="\033[97m"
 
-# ========= UI =========
-def clear(): os.system("clear" if os.name!="nt" else "cls")
+# ================= GLOBAL =================
+VERSION = "ONYX ● VULNERABILITY SCANNER v3.0.1"
+REPORT = {"INFO":[], "LOW":[], "MEDIUM":[], "HIGH":[], "CRITICAL":[]}
+
+# ================= UI =================
+def clear():
+    os.system("clear" if os.name!="nt" else "cls")
 
 def banner():
     print(f"""{CYAN}{BOLD}
@@ -17,131 +24,174 @@ def banner():
 ██║   ██║██║╚██╗██║  ╚██╔╝   ██╔██╗
 ╚██████╔╝██║ ╚████║   ██║   ██╔╝ ██╗
  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝
-   ONYX ● VULNERABILITY SCANNER v2.8 AGGRESSIVE
+   {VERSION}
 {RESET}""")
 
 def disclaimer():
-    print(f"""{YELLOW}
-AUTHORIZED SECURITY TESTING ONLY
-Use only on assets you own or have permission for
+    print(f"""{BLUE}{BOLD}
+════════════════════════════════════════════════════
+⚠️  LEGAL DISCLAIMER
+════════════════════════════════════════════════════
+This tool is intended for AUTHORIZED security testing
+and educational purposes ONLY.
+
+You may use this tool ONLY on:
+• Systems you own
+• Systems you have explicit permission to test
+• Legal penetration testing labs
+
+Unauthorized usage is strictly prohibited.
+The developer assumes NO liability for misuse,
+damages, or legal consequences.
+
+By continuing, YOU take full responsibility.
+════════════════════════════════════════════════════
 {RESET}""")
 
-# ========= SMART PROGRESS =========
-def progress(proc, title):
-    width=40; pct=0
-    print(f"{CYAN}{title}{RESET}")
-    while proc.poll() is None:
-        pct=min(pct+1,95)
-        bar="█"*int(width*pct/100)+"░"*(width-int(width*pct/100))
-        sys.stdout.write(f"\r[{bar}] {pct}%")
-        sys.stdout.flush()
-        time.sleep(0.4)
-    print(f"\r[{'█'*width}] 100% ✔️")
+# ================= PROGRESS =================
+def progress_bar(pct):
+    width=40
+    filled=int(width*pct/100)
+    bar="█"*filled + "░"*(width-filled)
+    sys.stdout.write(f"\r[{bar}] {pct}%")
+    sys.stdout.flush()
 
-# ========= RUN =========
-def run(cmd, title):
+# ================= RUNNER =================
+def run_cmd(cmd, title):
+    print(f"{CYAN}{BOLD}{title}{RESET}")
     proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
-    progress(proc,title)
-    return proc.communicate()[0]
+    pct=0
+    output=[]
+    while True:
+        line=proc.stdout.readline()
+        if not line and proc.poll() is not None:
+            break
+        if line:
+            output.append(line.strip())
+            pct=min(pct+1,95)
+            progress_bar(pct)
+    progress_bar(100)
+    print(" completed ✔️\n")
+    return output
 
-# ========= PARSER =========
-def parse_sql(out):
-    sev={"critical":[], "high":[], "medium":[], "low":[]}
-
-    for l in out.splitlines():
-        s=l.lower().strip()
-
-        if not s or s.startswith(("[*]","[info] starting","___","|_")):
-            continue
-
-        if any(k in s for k in [
-            "available databases",
-            "union query",
-            "boolean-based blind",
-            "error-based",
-            "time-based blind"
-        ]):
-            sev["critical"].append(l)
-
-        elif "payload:" in s or "parameter:" in s or "back-end dbms" in s:
-            sev["high"].append(l)
-
-        elif "xss" in s:
-            sev["medium"].append(l)
-
-        elif "warning" in s:
-            sev["low"].append(l)
-
-    return sev
-
-def parse_xss(out):
-    sev={"critical":[], "high":[], "medium":[], "low":[]}
-    for l in out.splitlines():
+# ================= PARSERS =================
+def parse_sqlmap(lines):
+    for l in lines:
         s=l.lower()
-        if "stored xss" in s:
-            sev["high"].append(l)
-        elif "reflected xss" in s:
-            sev["medium"].append(l)
-    return sev
+        if any(x in s for x in ["boolean-based","error-based","time-based","union query","available databases"]):
+            REPORT["CRITICAL"].append(l)
+        elif any(x in s for x in ["parameter:","payload:","back-end dbms"]):
+            REPORT["HIGH"].append(l)
+        elif "warning" in s:
+            REPORT["LOW"].append(l)
 
-# ========= SCANS =========
+def parse_dalfox(lines):
+    for l in lines:
+        s=l.lower()
+        if "found" in s or "vulnerable" in s:
+            REPORT["CRITICAL"].append(l)
+
+def parse_nmap(lines):
+    for l in lines:
+        if "/tcp open" in l.lower():
+            REPORT["LOW"].append(l)
+
+def parse_nikto(lines):
+    for l in lines:
+        s=l.lower()
+        if "osvdb" in s or "cve" in s:
+            REPORT["MEDIUM"].append(l)
+        elif "missing" in s:
+            REPORT["LOW"].append(l)
+
+# ================= SCANS =================
 def scan_sql(target):
     cmd=[
         "sqlmap","-u",target,
-        "--batch","--level=5","--risk=3",
-        "--dbs","--random-agent",
-        "--threads=1"
+        "--batch","--dbs",
+        "--level=5","--risk=3",
+        "--threads=2","--random-agent"
     ]
-    out=run(cmd,"SQL Injection Scan (AGGRESSIVE)")
-    return parse_sql(out)
+    parse_sqlmap(run_cmd(cmd,"SQL Injection Scan (AGGRESSIVE)"))
 
 def scan_xss(target):
-    out=run(["dalfox","url",target,"--auto"],"XSS Scan (AGGRESSIVE)")
-    return parse_xss(out)
+    cmd=[
+        "dalfox","url",target,
+        "--only-poc",
+        "--skip-bav",
+        "--waf-evasion",
+        "--mining-all",
+        "--worker","50"
+    ]
+    parse_dalfox(run_cmd(cmd,"XSS Scan (AGGRESSIVE)"))
 
-# ========= REPORT =========
-def report(target, sev):
-    print(f"\n{BOLD}════════════ ONYX REPORT ════════════{RESET}")
+def scan_nmap(target):
+    host=urlparse(target).hostname
+    parse_nmap(run_cmd(["nmap","-Pn","-sV",host],"Port Scan (Nmap)"))
+
+def scan_nikto(target):
+    parse_nikto(run_cmd(["nikto","-h",target],"Nikto Scan"))
+
+# ================= REPORT =================
+def show_report(target):
+    print(f"{BOLD}════════════════════ ONYX REPORT ════════════════════{RESET}")
     print(f"Target : {target}")
     print(f"Time   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-    print(f"💥 CRITICAL ({len(sev['critical'])})")
-    for i in sev["critical"]: print(f"   - {i}")
+    def block(label,color,emoji):
+        items=REPORT[label]
+        print(f"{color}{emoji} {label} ({len(items)}){RESET}")
+        for i in items:
+            print(f"   - {i}")
+        print()
 
-    print(f"\n🔴 HIGH ({len(sev['high'])})")
-    for i in sev["high"]: print(f"   - {i}")
+    block("CRITICAL",WHITE,"💥")
+    block("HIGH",RED,"🔴")
+    block("MEDIUM",GREEN,"🟢")
+    block("LOW",YELLOW,"🟡")
 
-    print(f"\n🟢 MEDIUM ({len(sev['medium'])})")
-    for i in sev["medium"]: print(f"   - {i}")
-
-    print(f"\n🟡 LOW ({len(sev['low'])})")
-    for i in sev["low"]: print(f"   - {i}")
-
-# ========= MAIN =========
+# ================= MAIN =================
 def main():
     clear(); banner(); disclaimer()
-    target=input("TARGET URL: ").strip()
+    target=input(f"{YELLOW}TARGET URL:{RESET} ").strip()
+    if not target.startswith("http"):
+        target="http://"+target
 
     while True:
-        print("""
-[1] SQL Injection Scan (AGGRESSIVE)
-[2] XSS Scan (AGGRESSIVE)
-[3] Full Scan
+        print(f"""
+{BOLD}[ ONYX CONTROL PANEL ]{RESET}
+[1] SQL Injection Scan (Aggressive)
+[2] XSS Scan (Aggressive)
+[3] Port Scan (Nmap)
+[4] Nikto Scan
+[5] Full Scan
 [0] Exit
 """)
         c=input("ONYX > ").strip()
+        REPORT["INFO"].clear()
+        REPORT["LOW"].clear()
+        REPORT["MEDIUM"].clear()
+        REPORT["HIGH"].clear()
+        REPORT["CRITICAL"].clear()
 
         if c=="1":
-            report(target, scan_sql(target))
+            scan_sql(target); show_report(target)
         elif c=="2":
-            report(target, scan_xss(target))
+            scan_xss(target); show_report(target)
         elif c=="3":
-            total={"critical":[], "high":[], "medium":[], "low":[]}
-            for s in (scan_sql(target), scan_xss(target)):
-                for k in total: total[k]+=s[k]
-            report(target,total)
+            scan_nmap(target); show_report(target)
+        elif c=="4":
+            scan_nikto(target); show_report(target)
+        elif c=="5":
+            scan_sql(target)
+            scan_xss(target)
+            scan_nmap(target)
+            scan_nikto(target)
+            show_report(target)
         elif c=="0":
-            break
+            print("ONYX exiting ⚡"); break
+        else:
+            print("Invalid option!")
 
 if __name__=="__main__":
     main()
