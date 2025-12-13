@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-import os, sys, time, subprocess, shutil
+import os, sys, time, subprocess, shutil, re
 from datetime import datetime
 from urllib.parse import urlparse
 
-VERSION = "2.3"
+VERSION = "2.4"
 
 # ========= COLORS =========
 CYAN="\033[96m"; BLUE="\033[94m"; GREEN="\033[92m"
@@ -22,7 +22,7 @@ def banner():
 ██║   ██║██║╚██╗██║  ╚██╔╝   ██╔██╗
 ╚██████╔╝██║ ╚████║   ██║   ██╔╝ ██╗
  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝
-   ONYX ● VULNERABILITY SCANNER v{VERSION}
+     ONYX ● VULNERABILITY SCANNER v{VERSION}
 {RESET}""")
 
 def disclaimer():
@@ -57,7 +57,7 @@ def run(cmd):
 
 def ensure_go():
     if shutil.which("go"): return True
-    ans=input("Go not installed. Install now? [Y/n]: ").lower()
+    ans=input("Go not installed. Install now? [Y/n]: ").lower().strip()
     if ans=="n": return False
     pm=detect_pm()
     if pm=="apt": run("sudo apt update && sudo apt install -y golang")
@@ -67,7 +67,7 @@ def ensure_go():
 
 def ensure_tool(name):
     if shutil.which(name): return True
-    ans=input(f"{YELLOW}{name} not found. Install it? [Y/n]: {RESET}").lower()
+    ans=input(f"{YELLOW}{name} not found. Install it? [Y/n]: {RESET}").lower().strip()
     if ans=="n": return False
     pm=detect_pm()
 
@@ -77,13 +77,13 @@ def ensure_tool(name):
         os.environ["PATH"]+=os.pathsep+os.path.expanduser("~/go/bin")
 
     elif name=="sqlmap":
-        run(f"sudo {pm} install -y sqlmap" if pm=="apt" else f"sudo {pm} -Sy --noconfirm sqlmap")
+        run("sudo apt install -y sqlmap" if pm=="apt" else f"sudo {pm} -Sy --noconfirm sqlmap")
 
     elif name=="nikto":
-        run(f"sudo {pm} install -y nikto" if pm=="apt" else f"sudo {pm} -Sy --noconfirm nikto")
+        run("sudo apt install -y nikto" if pm=="apt" else f"sudo {pm} -Sy --noconfirm nikto")
 
     elif name=="nmap":
-        run(f"sudo {pm} install -y nmap" if pm=="apt" else f"sudo {pm} -Sy --noconfirm nmap")
+        run("sudo apt install -y nmap" if pm=="apt" else f"sudo {pm} -Sy --noconfirm nmap")
 
     return shutil.which(name) is not None
 
@@ -99,11 +99,18 @@ def run_tool(cmd):
 def empty_result():
     return {"info":[], "low":[], "medium":[], "high":[], "critical":[]}
 
+def normalize_url(url):
+    url=url.strip()
+    if not url.startswith("http"):
+        url="http://"+url
+    url=url.replace("http://http://","http://").replace("https://https://","https://")
+    return url
+
 def extract_domain(url):
     p=urlparse(url)
     return p.netloc or p.path
 
-# ========= SCANS (FINDINGS-BASED) =========
+# ========= SCANS =========
 def scan_subdomain(target):
     res=empty_result()
     if not ensure_tool("subfinder"): return res
@@ -111,29 +118,35 @@ def scan_subdomain(target):
     out=run_tool(["subfinder","-silent","-d",extract_domain(target)])
     for s in out.splitlines():
         res["info"].append(f"Discovered subdomain: {s}")
+    if not res["info"]:
+        res["info"].append("No subdomains found")
     return res
 
 def scan_nmap(target):
     res=empty_result()
     if not ensure_tool("nmap"): return res
-    progress("Port Scanning (Nmap)")
+    progress("Port Scan (Nmap)")
     out=run_tool(["nmap","-sV","-Pn",extract_domain(target)])
     for l in out.splitlines():
         if "/tcp" in l and "open" in l:
-            res["info"].append(f"Open service detected: {l.strip()}")
+            res["info"].append(f"Open service: {l.strip()}")
+    if not res["info"]:
+        res["info"].append("No open TCP services detected")
     return res
 
 def scan_xss(target):
     res=empty_result()
     if not ensure_tool("dalfox"): return res
     progress("XSS Scan (Dalfox)")
-    out=run_tool(["dalfox","url",target])
+    out=run_tool(["dalfox","url",target,"--silence"])
     for l in out.splitlines():
         ll=l.lower()
-        if "stored xss" in ll:
+        if "found" in ll and "xss" in ll:
             res["high"].append(l.strip())
-        elif "reflected xss" in ll:
+        elif "reflected" in ll:
             res["medium"].append(l.strip())
+    if not res["high"] and not res["medium"]:
+        res["info"].append("No XSS detected by Dalfox")
     return res
 
 def scan_sql(target):
@@ -142,14 +155,16 @@ def scan_sql(target):
     progress("SQL Injection Scan (SQLMap)")
     out=run_tool([
         "sqlmap","-u",target,"--batch",
-        "--level=1","--risk=1","--threads=1","--delay=1"
+        "--level=2","--risk=2","--threads=1","--delay=1"
     ])
     for l in out.splitlines():
         ll=l.lower()
-        if "is vulnerable" in ll:
-            res["critical"].append("SQL Injection confirmed on target")
         if "parameter" in ll and "vulnerable" in ll:
+            res["critical"].append(l.strip())
+        elif "sql injection" in ll:
             res["high"].append(l.strip())
+    if not res["critical"] and not res["high"]:
+        res["info"].append("No SQL Injection detected by SQLMap")
     return res
 
 def scan_nikto(target):
@@ -160,6 +175,8 @@ def scan_nikto(target):
     for l in out.splitlines():
         if "header" in l.lower():
             res["low"].append(l.strip())
+    if not res["low"]:
+        res["info"].append("No low-risk web misconfigurations found")
     return res
 
 def scan_nuclei(target):
@@ -169,14 +186,12 @@ def scan_nuclei(target):
     out=run_tool(["nuclei","-u",target])
     for l in out.splitlines():
         ll=l.lower()
-        if "[critical]" in ll:
-            res["critical"].append(l.strip())
-        elif "[high]" in ll:
-            res["high"].append(l.strip())
-        elif "[medium]" in ll:
-            res["medium"].append(l.strip())
-        elif "[low]" in ll:
-            res["low"].append(l.strip())
+        if "[critical]" in ll: res["critical"].append(l.strip())
+        elif "[high]" in ll: res["high"].append(l.strip())
+        elif "[medium]" in ll: res["medium"].append(l.strip())
+        elif "[low]" in ll: res["low"].append(l.strip())
+    if not any(res.values()):
+        res["info"].append("No vulnerabilities detected by Nuclei")
     return res
 
 def merge(a,b):
@@ -210,7 +225,7 @@ Time   : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 # ========= MAIN =========
 def main():
     clear(); banner(); disclaimer()
-    target=input(f"{CYAN}TARGET URL:{RESET} ").strip()
+    target=normalize_url(input(f"{CYAN}TARGET URL:{RESET} ").strip())
 
     while True:
         print(f"""
