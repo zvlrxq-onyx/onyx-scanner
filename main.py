@@ -3,10 +3,6 @@ import os
 import sys
 import time
 import subprocess
-<<<<<<< HEAD
-import re
-=======
->>>>>>> aa57dfa30ac7486966118deede9536c8872a3538
 from datetime import datetime
 
 # ========= COLOR =========
@@ -25,13 +21,8 @@ def banner():
     print(f"""{CYAN}{BOLD}
  ██████╗ ███╗   ██╗██╗   ██╗██╗  ██╗
 ██╔═══██╗████╗  ██║╚██╗ ██╔╝╚██╗██╔╝
-<<<<<<< HEAD
-██║   ██║██╔██╗ ██║ ╚████╔╝  ╚███╔╝ 
-██║   ██║██║╚██╗██║  ╚██╔╝   ██╔██╗ 
-=======
 ██║   ██║██╔██╗ ██║ ╚████╔╝  ╚███╔╝
 ██║   ██║██║╚██╗██║  ╚██╔╝   ██╔██╗
->>>>>>> aa57dfa30ac7486966118deede9536c8872a3538
 ╚██████╔╝██║ ╚████║   ██║   ██╔╝ ██╗
  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝
       ONYX • NEON SECURITY SCANNER
@@ -204,3 +195,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
