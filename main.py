@@ -4,7 +4,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 # ===================== META =====================
-VERSION = "6.0-FULL"
+VERSION = "6.6"
 HOME = os.path.expanduser("~/.onyx")
 RESULT_FILE = os.path.join(HOME, "last_result.json")
 
@@ -21,7 +21,7 @@ REPORT = {k: [] for k in LEVELS}
 # ===================== UI =====================
 def banner():
     os.system("clear")
-    print(C.CY+C.B+f"""
+    print(C.CY + C.B + f"""
  ██████╗ ███╗   ██╗██╗   ██╗██╗  ██╗
 ██╔═══██╗████╗  ██║╚██╗ ██╔╝╚██╗██╔╝
 ██║   ██║██╔██╗ ██║ ╚████╔╝  ╚███╔╝
@@ -30,183 +30,151 @@ def banner():
  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝
 
 ⚡ ONYX {VERSION} ⚡
+🔵 Advanced Web Security Scanner
 🛡 Authorized Security Testing Only
-"""+C.R)
+""" + C.R)
 
-def bar(title, duration=3.0):
-    print(C.M+f"⚙ {title}"+C.R)
+    print(C.GR + """
+[ DISCLAIMER ]
+ONYX is designed for authorized security testing only.
+Unauthorized scanning of systems you do not own or
+have permission to test is illegal and unethical.
+
+Use responsibly. Stay legal. Stay sharp.
+""" + C.R)
+
+def bar(title, duration=3.5):
+    print(C.M + f"⚙ {title}" + C.R)
     total = 40
-    start = time.time()
     for i in range(total+1):
         pct = int(i/total*100)
-        elapsed = time.time() - start
-        eta = (elapsed/i*(total-i)) if i>0 else 0
-        sys.stdout.write(
-            f"\r{C.CY}[{'█'*i}{'░'*(total-i)}] {pct:3d}% | ETA {eta:4.1f}s{C.R}"
-        )
+        sys.stdout.write(f"\r{C.CY}[{'█'*i}{'░'*(total-i)}] {pct:3d}%{C.R}")
         sys.stdout.flush()
         time.sleep(duration/total)
     print("\n")
 
 # ===================== UTILS =====================
-def host(url): return urlparse(url).netloc
+def host(url): 
+    return urlparse(url).netloc
 
-def add(level, vuln, payload, tool, cmd, evidence):
+def normalize_evidence(ev):
+    if ev is None:
+        return []
+    if isinstance(ev, str):
+        return [ev.strip()]
+    if isinstance(ev, list):
+        return [x.strip() for x in ev if isinstance(x, str)]
+    return []
+
+def add(level, title, detail, tool, cmd, evidence):
     REPORT[level].append({
-        "vuln":vuln, "payload":payload,
-        "tool":tool, "cmd":cmd, "evidence":evidence
+        "title": title,
+        "detail": detail,
+        "tool": tool,
+        "cmd": cmd,
+        "evidence": normalize_evidence(evidence)
     })
 
+def silent_bg(cmd):
+    return subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 def ensure(binname, install_cmd):
-    if shutil.which(binname): return
+    if shutil.which(binname):
+        return
     ans = input(C.Y+f"[?] Install {binname}? [Y/n]: "+C.R).strip().lower()
     if ans == "n": return
     bar(f"Installing {binname}", 2)
     subprocess.call(install_cmd, shell=True)
 
-def silence(cmd):
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-
 # ===================== SCANS =====================
+def scan_recon(url):
+    ensure("subfinder","sudo apt install -y subfinder")
+    ensure("httpx","sudo apt install -y httpx")
+    ensure("paramspider","pip install git+https://github.com/devanshbatham/ParamSpider.git")
+
+    bar("🌐 Recon Scan", 4)
+    domain = host(url)
+    outdir = os.path.join(HOME,"recon")
+    os.makedirs(outdir,exist_ok=True)
+    subs = f"{outdir}/subs.txt"
+    hosts = f"{outdir}/hosts.txt"
+
+    silent_bg(f"subfinder -d {domain} -silent -o {subs}").wait()
+    if os.path.exists(subs):
+        data = open(subs).read().splitlines()
+        add("INFO","Subdomain Enumeration",f"{len(data)} subdomains found","subfinder","",data[:10])
+
+    silent_bg(f"httpx -l {subs} -silent -o {hosts}").wait()
+    if os.path.exists(hosts):
+        data = open(hosts).read().splitlines()
+        add("INFO","Live Hosts Detection",f"{len(data)} live hosts found","httpx","",data[:10])
+
+    silent_bg(f"paramspider -d {domain} -o {outdir}").wait()
+    add("INFO","Parameters Enumeration","Params collected using paramspider","paramspider","",[domain])
+
 def scan_sql(url):
-    ensure("sqlmap", "sudo apt install -y sqlmap")
-    bar("💉 SQL Injection (sqlmap)", 5)
-
-    cmd = [
-        "sqlmap","-u",url,"--batch",
-        "--level","5","--risk","3","--threads","5"
-    ]
-    p = silence(cmd)
-
-    current_param = None
+    ensure("sqlmap","sudo apt install -y sqlmap")
+    bar("💉 SQL Injection Scan",5)
+    p = subprocess.Popen(f"sqlmap -u {url} --batch --level 5 --risk 3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     for line in p.stdout:
-        l = line.lower()
-
-        if l.startswith("parameter:"):
-            current_param = line.strip()
-
-        # MARKER VALID SQLMAP
-        if ("sql injection vulnerability detected" in l or
-            "the back-end dbms" in l or
-            ("type:" in l and "payload:" in l)):
-            add(
-                "CRITICAL",
-                "SQL Injection",
-                current_param or "Auto-detected parameter",
-                "sqlmap",
-                " ".join(cmd),
-                line.strip()
-            )
+        if "payload:" in line.lower():
+            add("CRITICAL","SQL Injection","Confirmed SQL Injection","sqlmap","",line.strip())
 
 def scan_xss(url):
-    ensure("dalfox", "go install github.com/hahwul/dalfox/v2@latest")
-    bar("🧪 XSS (Dalfox)", 5)
-
-    cmd = [
-        "dalfox","url",url,
-        "--deep-domxss","--mining-dom","--mining-dict",
-        "--follow-redirects","--no-color"
-    ]
-    p = silence(cmd)
-
+    ensure("dalfox","go install github.com/hahwul/dalfox/v2@latest")
+    bar("🧪 XSS Scan",5)
+    cmd = f"dalfox url {url} --deep-domxss --mining-dom --mining-dict --follow-redirects --no-color"
+    p = subprocess.Popen(cmd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
     for line in p.stdout:
-        # MARKER VALID DALFOX
-        if ("[V]" in line or "[POC]" in line or "Triggered XSS Payload" in line):
-            add(
-                "CRITICAL",
-                "Cross Site Scripting (XSS)",
-                line.strip(),
-                "dalfox",
-                " ".join(cmd),
-                line.strip()
-            )
-
-def scan_recon(url):
-    ensure("subfinder", "sudo apt install -y subfinder")
-    ensure("httpx", "sudo apt install -y httpx")
-    ensure("paramspider", "pip install git+https://github.com/devanshbatham/ParamSpider.git")
-
-    bar("🌐 Recon (subfinder + httpx + paramspider)", 4)
-
-    domain = host(url)
-    outdir = os.path.join(HOME, "recon")
-    os.makedirs(outdir, exist_ok=True)
-
-    subprocess.call(["subfinder","-d",domain,"-silent","-o",f"{outdir}/subs.txt"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.call(["httpx","-l",f"{outdir}/subs.txt","-silent","-o",f"{outdir}/hosts.txt"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.call(["paramspider","-d",domain,"-o",outdir],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    add(
-        "LOW",
-        "Reconnaissance Data",
-        "Subdomains, live hosts, parameters collected",
-        "recon",
-        "subfinder | httpx | paramspider",
-        domain
-    )
+        if "[v]" in line.lower() or "[poc]" in line.lower() or "triggered xss payload" in line.lower():
+            add("CRITICAL","Cross Site Scripting (XSS)",line.strip(),"dalfox","",line.strip())
 
 def scan_web(url):
-    ensure("nmap", "sudo apt install -y nmap")
-    ensure("nikto", "sudo apt install -y nikto")
-    ensure("nuclei", "sudo apt install -y nuclei")
-
-    bar("🕸 Web Scan (nmap + nikto + nuclei)", 4)
-
-    subprocess.call(["nmap","-Pn",host(url)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.call(["nikto","-h",url],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.call(["nuclei","-u",url],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ensure("nmap","sudo apt install -y nmap")
+    ensure("nikto","sudo apt install -y nikto")
+    ensure("nuclei","sudo apt install -y nuclei")
+    bar("🕸 Web Scan",4)
+    silent_bg(f"nmap -Pn {host(url)}").wait()
+    silent_bg(f"nikto -h {url}").wait()
+    silent_bg(f"nuclei -u {url}").wait()
+    add("INFO","Web Scan Completed","Nmap/Nikto/Nuclei executed","webscan","",[url])
 
 # ===================== REPORT =====================
 def save(target):
-    os.makedirs(HOME, exist_ok=True)
+    os.makedirs(HOME,exist_ok=True)
     with open(RESULT_FILE,"w") as f:
-        json.dump({
-            "target":target,
-            "time":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "report":REPORT
-        }, f, indent=2)
+        json.dump({"target":target,"time":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"report":REPORT},f,indent=2)
 
 def show_result():
     banner()
     if not os.path.exists(RESULT_FILE):
         print(C.RD+"No previous result."+C.R); return
     d = json.load(open(RESULT_FILE))
-
     print(f"🎯 Target : {d['target']}")
     print(f"⏰ Time   : {d['time']}\n")
-
     print("📊 Risk Summary:")
     for lvl in LEVELS:
         print(f"  {lvl:<9}: {len(d['report'][lvl])}")
-
-    print("\n📋 Findings:")
     for lvl in LEVELS:
+        col = C.RD if lvl=="CRITICAL" else C.Y if lvl=="HIGH" else C.CY
         for f in d["report"][lvl]:
-            col = C.RD if lvl=="CRITICAL" else C.Y if lvl=="HIGH" else C.G
             print(f"\n{col}{lvl}{C.R}")
-            print(f" ├─ 🔥 Vulnerability : {f['vuln']}")
-            print(f" ├─ 🧪 Payload       : {f['payload']}")
-            print(f" ├─ 🧰 Tool          : {f['tool']}")
-            print(f" ├─ 💻 Command       : {f['cmd']}")
-            print(f" └─ 📌 Evidence      : {f['evidence']}")
+            print(f" ├─ 📌 Finding : {f['title']}")
+            print(f" ├─ 📄 Detail  : {f['detail']}")
+            print(f" └─ 🧾 Evidence:")
+            for e in f["evidence"]:
+                print(f"     • {e}")
 
-# ===================== UPDATE / HELP =====================
+# ===================== UPDATE =====================
 def update():
     banner()
-    bar("🚀 Updating ONYX", 3)
-    subprocess.call(
-        "curl -s https://raw.githubusercontent.com/zvlrxq-onyx/onyx-scanner/main/install.sh | bash",
-        shell=True
-    )
-    print(C.G+"✔ Update completed"+C.R)
+    p = silent_bg("bash -c 'curl -s https://raw.githubusercontent.com/zvlrxq-onyx/onyx-scanner/main/install.sh | bash >/dev/null 2>&1'")
+    bar("🚀 Updating ONYX",4.5)
+    p.wait()
+    print(C.G+"✔ ONYX updated successfully"+C.R)
     sys.exit(0)
 
+# ===================== HELP =====================
 def help_menu():
     banner()
     print("""
@@ -229,39 +197,34 @@ def main():
 
     while True:
         banner()
-        print(C.G+f"🎯 Target : {target}\n"+C.R)
         print(C.CY+C.B+"""
-╔══════════════════════════════════════╗
-║        🕷  ONYX SCAN MENU  🕷          ║
-╠══════════════════════════════════════╣
-║ [1] 💉 SQL Injection Scan            ║
-║ [2] 🧪 XSS Scan (Dalfox)             ║
-║ [3] 🌐 Recon Scan                    ║
-║ [4] 🕸 Web Vulnerability Scan         ║
-║ [5] 🚀 Full Scan (ALL MODULES)       ║
-║ [6] 📊 Show Last Result              ║
-║ [0] ❌ Exit                          ║
-╚══════════════════════════════════════╝
-"""+C.R)
-
+╔═════════════════════════════════════════════╗
+║              🕷  ONYX SCAN MENU  🕷           ║
+╠═════════════════════════════════════════════╣
+║ [1] 🌐 Recon Scan (subfinder/httpx/param)   ║
+║ [2] 💉 SQL Injection Scan                   ║
+║ [3] 🧪 XSS Scan (Dalfox)                    ║
+║ [4] 🕸 Web Vulnerability Scan                ║
+║ [5] 🚀 Full Scan (ALL MODULES)              ║
+║ [6] 📊 Show Last Result                     ║
+║ [0] ❌ Exit                                 ║
+╚═════════════════════════════════════════════╝
+""" + C.R)
         choice = input(C.M+"ONYX ➜ "+C.R).strip()
         for k in REPORT: REPORT[k].clear()
 
-        if choice=="1": scan_sql(target)
-        elif choice=="2": scan_xss(target)
-        elif choice=="3": scan_recon(target)
+        if choice=="1": scan_recon(target)
+        elif choice=="2": scan_sql(target)
+        elif choice=="3": scan_xss(target)
         elif choice=="4": scan_web(target)
         elif choice=="5":
-            scan_recon(target)
-            scan_sql(target)
-            scan_xss(target)
-            scan_web(target)
+            scan_recon(target); scan_sql(target)
+            scan_xss(target); scan_web(target)
         elif choice=="6":
             show_result(); input("\nPress ENTER..."); continue
         elif choice=="0":
             print(C.G+"👋 Bye bro, stay legal!"+C.R); break
-        else:
-            continue
+        else: continue
 
         save(target)
         show_result()
