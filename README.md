@@ -1,4 +1,4 @@
-# UPDATE ONYX Vulnerability Scanner 6.0
+# UPDATE ONYX Vulnerability Scanner 6.6
 
 **ONYX** is a vulnerability scanner framework designed for educational and authorized security testing only.  
 Unauthorized scanning of systems you do not own is illegal and unethical. Use responsibly.
