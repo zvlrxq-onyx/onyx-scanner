@@ -47,6 +47,18 @@ PKG_MANAGER_NAME, PKG_INSTALL_TPL = detect_pkg_manager()
 # Map of tool name -> package name per manager (when they differ)
 PKG_NAME_MAP = {
     # tool_name : { manager_name: pkg_name }
+    "go": {
+        "pacman": "go",
+        "apt": "golang",
+        "apt-get": "golang",
+        "dnf": "golang",
+        "yum": "golang",
+        "zypper": "go",
+        "apk": "go",
+        "brew": "go",
+        "emerge": "dev-lang/go",
+        "default": "golang",
+    },
     "subfinder": {
         "pacman": "subfinder",
         "apt": "subfinder",
@@ -166,8 +178,120 @@ def add(level, title, detail, tool, cmd, evidence):
 def silent_bg(cmd):
     return subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def _symlink_to_path(binname):
+    """
+    After go/pip install, the binary may land in ~/go/bin or ~/.local/bin
+    but not be in $PATH yet. Try to symlink it to /usr/local/bin so it's
+    globally callable from any terminal session.
+    """
+    candidates = [
+        os.path.expanduser(f"~/go/bin/{binname}"),
+        os.path.expanduser(f"~/.local/bin/{binname}"),
+        os.path.expanduser(f"~/.local/pipx/venvs/{binname}/bin/{binname}"),
+        # go install with custom GOPATH
+        os.path.join(os.environ.get("GOPATH", ""), f"bin/{binname}"),
+    ]
+    for src in candidates:
+        if os.path.isfile(src):
+            dest = f"/usr/local/bin/{binname}"
+            try:
+                subprocess.call(f"sudo ln -sf {src} {dest}", shell=True)
+                print(C.G + f"✔ Linked {src} → {dest}" + C.R)
+            except Exception:
+                print(C.Y + f"⚠ Could not symlink. Add {os.path.dirname(src)} to your PATH manually." + C.R)
+            return True
+    return False
+
+def ensure_go_tool(binname, go_pkg):
+    """
+    Install a Go-based tool globally so it's callable from any terminal.
+    Steps:
+      1. Check if binary already exists in PATH
+      2. Check if Go is installed; if not, install via pkg manager
+      3. Run: go install <go_pkg>
+      4. Symlink the binary from ~/go/bin → /usr/local/bin
+    """
+    if shutil.which(binname):
+        return  # already available globally
+
+    print(C.Y + f"[!] '{binname}' not found." + C.R)
+    ans = input(C.Y + f"[?] Install via Go? (go install {go_pkg}) [Y/n]: " + C.R).strip().lower()
+    if ans == "n":
+        return
+
+    # Make sure Go is installed
+    if not shutil.which("go"):
+        print(C.Y + "[!] Go not found. Installing Go first..." + C.R)
+        go_install_cmd = get_install_cmd("go", "sudo apt install -y golang")
+        subprocess.call(go_install_cmd, shell=True)
+        if not shutil.which("go"):
+            print(C.RD + "✘ Go installation failed. Install Go manually: https://go.dev/dl/" + C.R)
+            return
+
+    bar(f"Installing {binname} via Go", 3)
+
+    # Set GOPATH explicitly so we know where the binary lands
+    gopath = os.environ.get("GOPATH", os.path.expanduser("~/go"))
+    env = os.environ.copy()
+    env["GOPATH"] = gopath
+    env["PATH"] = f"{gopath}/bin:" + env.get("PATH", "")
+
+    ret = subprocess.call(f"go install {go_pkg}", shell=True, env=env)
+    if ret != 0:
+        print(C.RD + f"✘ Failed to install {binname}." + C.R)
+        return
+
+    # Symlink so it's globally available
+    if not _symlink_to_path(binname):
+        # fallback: tell user to add to PATH
+        print(C.Y + f"⚠ Add {gopath}/bin to your PATH:\n  export PATH=$PATH:{gopath}/bin" + C.R)
+    else:
+        print(C.G + f"✔ {binname} installed and globally available!" + C.R)
+
+def ensure_pip_tool(binname, pip_pkg_or_url):
+    """
+    Install a Python-based CLI tool via pip so it's callable globally.
+    Steps:
+      1. Check if binary already exists in PATH
+      2. pip install <pkg_or_git_url>
+      3. Symlink from ~/.local/bin → /usr/local/bin if needed
+    """
+    if shutil.which(binname):
+        return  # already available
+
+    print(C.Y + f"[!] '{binname}' not found." + C.R)
+    ans = input(C.Y + f"[?] Install via pip? (pip install {pip_pkg_or_url}) [Y/n]: " + C.R).strip().lower()
+    if ans == "n":
+        return
+
+    bar(f"Installing {binname} via pip", 2)
+
+    # Try pipx first (cleanest for CLI tools), fall back to pip
+    if shutil.which("pipx"):
+        # pipx handles PATH automatically
+        ret = subprocess.call(f"pipx install '{pip_pkg_or_url}'", shell=True)
+    else:
+        ret = subprocess.call(
+            f"pip install --user '{pip_pkg_or_url}'",
+            shell=True
+        )
+
+    if ret != 0:
+        print(C.RD + f"✘ Failed to install {binname}." + C.R)
+        return
+
+    # Symlink to /usr/local/bin so it's callable from anywhere
+    if not _symlink_to_path(binname):
+        local_bin = os.path.expanduser("~/.local/bin")
+        print(C.Y + f"⚠ Add {local_bin} to your PATH:\n  export PATH=$PATH:{local_bin}" + C.R)
+    else:
+        print(C.G + f"✔ {binname} installed and globally available!" + C.R)
+
 def ensure(binname, fallback_install_cmd=None):
-    """Check if a binary exists, offer to install it using the detected package manager."""
+    """
+    Install a system package using the detected package manager.
+    Use ensure_go_tool() for Go binaries, ensure_pip_tool() for Python CLIs.
+    """
     if shutil.which(binname):
         return
 
@@ -183,7 +307,7 @@ def ensure(binname, fallback_install_cmd=None):
 def scan_recon(url):
     ensure("subfinder")
     ensure("httpx")
-    ensure("paramspider", "pip install git+https://github.com/devanshbatham/ParamSpider.git")
+    ensure_pip_tool("paramspider", "git+https://github.com/devanshbatham/ParamSpider.git")
 
     bar("🌐 Recon Scan", 4)
     domain = host(url)
@@ -237,7 +361,7 @@ def scan_sql(url):
         add("INFO", "SQL Injection Scan", "No SQLi detected with current settings", "sqlmap", cmd, [url])
 
 def scan_xss(url):
-    ensure("dalfox", "go install github.com/hahwul/dalfox/v2@latest")
+    ensure_go_tool("dalfox", "github.com/hahwul/dalfox/v2@latest")
     bar("🧪 XSS Scan", 5)
     cmd = f"dalfox url {url} --deep-domxss --mining-dom --mining-dict --follow-redirects --no-color"
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
