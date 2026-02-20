@@ -248,13 +248,23 @@ def ensure_go_tool(binname, go_pkg):
     else:
         print(C.G + f"✔ {binname} installed and globally available!" + C.R)
 
+def _in_virtualenv():
+    """Return True if Python is running inside a virtualenv or venv."""
+    return (
+        os.environ.get("VIRTUAL_ENV") is not None
+        or getattr(sys, "real_prefix", None) is not None           # virtualenv
+        or (getattr(sys, "base_prefix", sys.prefix) != sys.prefix) # venv / conda
+    )
+
 def ensure_pip_tool(binname, pip_pkg_or_url):
     """
     Install a Python-based CLI tool via pip so it's callable globally.
-    Steps:
-      1. Check if binary already exists in PATH
-      2. pip install <pkg_or_git_url>
-      3. Symlink from ~/.local/bin → /usr/local/bin if needed
+    Priority order:
+      1. pipx  — cleanest, auto-handles PATH, works inside/outside venv
+      2. pip (no --user) — when inside a virtualenv
+      3. pip --user — standard user install outside venv
+      4. pip --break-system-packages — for system Python on Debian/Ubuntu 23+
+    Then symlinks the binary to /usr/local/bin for global access.
     """
     if shutil.which(binname):
         return  # already available
@@ -266,26 +276,45 @@ def ensure_pip_tool(binname, pip_pkg_or_url):
 
     bar(f"Installing {binname} via pip", 2)
 
-    # Try pipx first (cleanest for CLI tools), fall back to pip
-    if shutil.which("pipx"):
-        # pipx handles PATH automatically
-        ret = subprocess.call(f"pipx install '{pip_pkg_or_url}'", shell=True)
-    else:
-        ret = subprocess.call(
-            f"pip install --user '{pip_pkg_or_url}'",
-            shell=True
-        )
+    in_venv = _in_virtualenv()
 
-    if ret != 0:
-        print(C.RD + f"✘ Failed to install {binname}." + C.R)
+    # ── Strategy 1: pipx (best option, works everywhere) ─────────────────
+    if shutil.which("pipx"):
+        ret = subprocess.call(f"pipx install '{pip_pkg_or_url}'", shell=True)
+        if ret == 0:
+            _symlink_to_path(binname)
+            print(C.G + f"✔ {binname} installed via pipx and globally available!" + C.R)
+            return
+
+    # ── Strategy 2: inside virtualenv → plain pip install (no --user) ────
+    if in_venv:
+        ret = subprocess.call(f"pip install '{pip_pkg_or_url}'", shell=True)
+        if ret == 0:
+            _symlink_to_path(binname)
+            print(C.G + f"✔ {binname} installed inside venv." + C.R)
+            return
+
+    # ── Strategy 3: pip --user (standard outside venv) ───────────────────
+    ret = subprocess.call(f"pip install --user '{pip_pkg_or_url}'", shell=True)
+    if ret == 0:
+        _symlink_to_path(binname)
+        print(C.G + f"✔ {binname} installed globally!" + C.R)
         return
 
-    # Symlink to /usr/local/bin so it's callable from anywhere
-    if not _symlink_to_path(binname):
-        local_bin = os.path.expanduser("~/.local/bin")
-        print(C.Y + f"⚠ Add {local_bin} to your PATH:\n  export PATH=$PATH:{local_bin}" + C.R)
-    else:
-        print(C.G + f"✔ {binname} installed and globally available!" + C.R)
+    # ── Strategy 4: system Python with PEP 668 restriction (Debian/Ubuntu 23+)
+    ret = subprocess.call(
+        f"pip install --break-system-packages '{pip_pkg_or_url}'",
+        shell=True
+    )
+    if ret == 0:
+        _symlink_to_path(binname)
+        print(C.G + f"✔ {binname} installed with --break-system-packages!" + C.R)
+        return
+
+    # ── All strategies failed ─────────────────────────────────────────────
+    print(C.RD + f"✘ Failed to install {binname}. Try manually:" + C.R)
+    print(C.Y + f"  pipx install '{pip_pkg_or_url}'" + C.R)
+    print(C.Y + f"  or: pip install '{pip_pkg_or_url}'" + C.R)
 
 def ensure(binname, fallback_install_cmd=None):
     """
