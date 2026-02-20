@@ -399,14 +399,78 @@ def scan_xss(url):
             add("CRITICAL", "Cross Site Scripting (XSS)", line.strip(), "dalfox", "", line.strip())
 
 def scan_web(url):
+    import threading
     ensure("nmap")
     ensure("nikto")
     ensure("nuclei")
-    bar("🕸 Web Scan", 4)
-    silent_bg(f"nmap -Pn {host(url)}").wait()
-    silent_bg(f"nikto -h {url}").wait()
-    silent_bg(f"nuclei -u {url}").wait()
-    add("INFO", "Web Scan Completed", "Nmap/Nikto/Nuclei executed", "webscan", "", [url])
+    bar("🕸 Web Scan", 2)
+
+    target_host = host(url)
+
+    # ── Semua tool jalan PARALLEL, bukan satu-satu ───────────────────────
+    # nmap  : -T4 timing agresif, top 1000 port, skip DNS reverse lookup
+    # nikto : -maxtime 120 berhenti otomatis setelah 2 menit
+    # nuclei: -rl 50 rate limit, -timeout 10 per request, hanya severity penting
+    # ─────────────────────────────────────────────────────────────────────
+    procs = {
+        "nmap": subprocess.Popen(
+            f"nmap -Pn -T4 -n --top-ports 1000 {target_host}",
+            shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+        ),
+        "nikto": subprocess.Popen(
+            f"nikto -h {url} -maxtime 120 -nointeractive",
+            shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+        ),
+        "nuclei": subprocess.Popen(
+            f"nuclei -u {url} -timeout 10 -rl 50 -severity low,medium,high,critical -silent",
+            shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+        ),
+    }
+
+    findings = {k: [] for k in procs}
+
+    def collect(name, proc):
+        try:
+            out, _ = proc.communicate(timeout=180)  # max 3 menit per tool
+            findings[name] = [l.strip() for l in out.splitlines() if l.strip()]
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            findings[name] = ["[timeout] scan melebihi 3 menit, dihentikan"]
+
+    threads = [threading.Thread(target=collect, args=(n, p)) for n, p in procs.items()]
+    for t in threads: t.start()
+    for t in threads: t.join()  # tunggu semua selesai BERSAMAAN
+
+    # ── Parse nmap ────────────────────────────────────────────────────────
+    open_ports = [l for l in findings["nmap"] if "open" in l.lower()]
+    if open_ports:
+        add("INFO", "Open Ports (Nmap)", f"{len(open_ports)} port terbuka ditemukan",
+            "nmap", "", open_ports[:20])
+    else:
+        add("INFO", "Open Ports (Nmap)", "Tidak ada port terbuka atau scan timeout",
+            "nmap", "", findings["nmap"][:5])
+
+    # ── Parse nikto ───────────────────────────────────────────────────────
+    nikto_hits = [l for l in findings["nikto"] if l.startswith("+")]
+    if nikto_hits:
+        for hit in nikto_hits[:15]:
+            sev = "HIGH" if any(k in hit.lower() for k in (
+                "injection", "xss", "rce", "exec", "upload", "bypass"
+            )) else "MEDIUM"
+            add(sev, "Nikto Finding", hit, "nikto", "", [hit])
+    else:
+        add("INFO", "Nikto Scan", "Tidak ada temuan atau timeout", "nikto", "", [url])
+
+    # ── Parse nuclei ──────────────────────────────────────────────────────
+    nuclei_hits = [l for l in findings["nuclei"] if l]
+    if nuclei_hits:
+        for hit in nuclei_hits[:15]:
+            sev = "CRITICAL" if "critical" in hit.lower() else \
+                  "HIGH"     if "high"     in hit.lower() else \
+                  "MEDIUM"   if "medium"   in hit.lower() else "LOW"
+            add(sev, "Nuclei Finding", hit, "nuclei", "", [hit])
+    else:
+        add("INFO", "Nuclei Scan", "Tidak ada temuan atau timeout", "nuclei", "", [url])
 
 # ===================== REPORT =====================
 def save(target):
