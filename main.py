@@ -250,11 +250,39 @@ def scan_recon(url):
     stop.set(); spinner_t.join()
 
     if os.path.exists(subs):
-        data = open(subs).read().splitlines()
-        add("INFO", "Subdomain Enumeration", f"{len(data)} subdomain ditemukan", "subfinder", "", data[:10])
+        raw = open(subs).read().splitlines()
+        # Filter: hanya subdomain yang mengandung domain target, buang duplikat
+        seen = set()
+        filtered = []
+        for s in raw:
+            s = s.strip()
+            if not s: continue
+            if domain not in s: continue       # buang yang tidak relevan (happymod dll)
+            if s in seen: continue             # buang duplikat
+            seen.add(s)
+            filtered.append(s)
+        # Tulis ulang subs.txt yang sudah bersih supaya httpx juga pakai yang bersih
+        open(subs, "w").write("\n".join(filtered))
+        add("INFO", "Subdomain Enumeration",
+            f"{len(filtered)} subdomain ditemukan (domain: {domain})",
+            "subfinder", "", filtered[:15])
+
     if os.path.exists(lhosts):
-        data = open(lhosts).read().splitlines()
-        add("INFO", "Live Hosts Detection", f"{len(data)} live host", "httpx", "", data[:10])
+        raw = open(lhosts).read().splitlines()
+        # Filter & deduplikasi live hosts juga
+        seen = set()
+        filtered_hosts = []
+        for h in raw:
+            h = h.strip()
+            if not h: continue
+            if domain not in h: continue
+            if h in seen: continue
+            seen.add(h)
+            filtered_hosts.append(h)
+        add("INFO", "Live Hosts Detection",
+            f"{len(filtered_hosts)} live host (domain: {domain})",
+            "httpx", "", filtered_hosts[:15])
+
     add("INFO", "Parameters Enumeration", "Params dikumpulkan via paramspider", "paramspider", "", [domain])
 
 def scan_sql(url):
