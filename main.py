@@ -354,21 +354,99 @@ def scan_web(url):
 
     stop.set(); spinner_t.join()
 
-    # ── Parse hasil ───────────────────────────────────────────────────────
+    # ── Parse Nmap ────────────────────────────────────────────────────────
+    # Port berbahaya yang terbuka ke publik → langsung HIGH
+    DANGEROUS_PORTS = {
+        "21":   "FTP terbuka — plaintext, rentan brute-force & sniffing",
+        "22":   "SSH terbuka — pastikan hanya key-based auth",
+        "23":   "Telnet terbuka — plaintext, sangat berbahaya",
+        "25":   "SMTP terbuka — bisa digunakan untuk spam relay",
+        "3306": "MySQL terbuka ke publik — database langsung exposed!",
+        "5432": "PostgreSQL terbuka ke publik — database langsung exposed!",
+        "6379": "Redis terbuka — sering tanpa auth, RCE risk",
+        "27017":"MongoDB terbuka — sering tanpa auth",
+        "8080": "HTTP alternatif terbuka — cek apakah ada panel admin",
+        "8443": "HTTPS alternatif terbuka — cek apakah ada panel admin",
+    }
     open_ports = [l for l in tool_output["nmap"] if "open" in l.lower()]
     if open_ports:
-        add("INFO", "Open Ports (Nmap)", f"{len(open_ports)} port terbuka", "nmap", "", open_ports[:20])
+        for port_line in open_ports[:20]:
+            port_num = port_line.split("/")[0].strip()
+            if port_num in DANGEROUS_PORTS:
+                add("HIGH", f"Port Berbahaya Terbuka: {port_num}",
+                    DANGEROUS_PORTS[port_num], "nmap", "", [port_line])
+            else:
+                add("INFO", "Open Port", port_line, "nmap", "", [port_line])
     else:
         add("INFO", "Open Ports (Nmap)", "Tidak ada port terbuka / timeout", "nmap", "", tool_output["nmap"][:5])
 
-    nikto_hits = [l for l in tool_output["nikto"] if l.startswith("+")]
-    if nikto_hits:
-        for hit in nikto_hits[:15]:
-            sev = "HIGH" if any(k in hit.lower() for k in ("injection","xss","rce","exec","upload","bypass")) else "MEDIUM"
-            add(sev, "Nikto Finding", hit, "nikto", "", [hit])
-    else:
-        add("INFO", "Nikto Scan", "Tidak ada temuan / timeout", "nikto", "", [url])
+    # ── Parse Nikto ───────────────────────────────────────────────────────
+    # False positive / metadata lines yang harus dibuang
+    NIKTO_FP = [
+        "no cgi directories found",
+        "target ip:",
+        "target hostname:",
+        "target port:",
+        "start time:",
+        "end time:",
+        "host(s) tested",
+        "1 host(s) tested",
+        "multiple ips found",      # info bukan vuln
+        "osvdb-",                  # OSVDB sudah deprecated
+    ]
+    # Keyword → severity mapping (urutan dari paling parah ke paling ringan)
+    NIKTO_HIGH = [
+        "sql injection", "xss", "cross-site scripting", "rce",
+        "remote code execution", "exec(", "upload", "bypass",
+        "shellshock", "backdoor", "webshell", "password",
+        "installation/", "install wizard", "setup wizard",
+    ]
+    NIKTO_MEDIUM = [
+        "x-frame-options", "x-content-type", "clickjack",
+        "inode", "etag", "cve-", "osvdb",
+        "header", "php/", "server:", "powered-by",
+        "panel", "platform", "multiple ip",
+        "robots.txt", "directory index", "directory listing",
+        "default file", "default page",
+    ]
+    NIKTO_LOW = [
+        "httponly", "secure flag", "cookie",
+        "information disclosure", "x-powered-by",
+        "uncommon header",
+    ]
+    NIKTO_INFO_ONLY = [
+        "retrieved", "allowed http methods", "http methods",
+    ]
 
+    nikto_findings = False
+    for line in tool_output["nikto"]:
+        if not line.startswith("+"):
+            continue
+        line_lower = line.lower()
+
+        # Buang false positive / metadata
+        if any(fp in line_lower for fp in NIKTO_FP):
+            continue
+
+        # Klasifikasi severity
+        if any(k in line_lower for k in NIKTO_HIGH):
+            sev = "HIGH"
+        elif any(k in line_lower for k in NIKTO_MEDIUM):
+            sev = "MEDIUM"
+        elif any(k in line_lower for k in NIKTO_LOW):
+            sev = "LOW"
+        elif any(k in line_lower for k in NIKTO_INFO_ONLY):
+            sev = "INFO"
+        else:
+            sev = "MEDIUM"  # default untuk temuan Nikto yang tidak dikenal
+
+        add(sev, "Nikto Finding", line, "nikto", "", [line])
+        nikto_findings = True
+
+    if not nikto_findings:
+        add("INFO", "Nikto Scan", "Tidak ada temuan nyata / timeout", "nikto", "", [url])
+
+    # ── Parse Nuclei ──────────────────────────────────────────────────────
     if tool_output["nuclei"]:
         for hit in tool_output["nuclei"][:15]:
             sev = "CRITICAL" if "critical" in hit.lower() else \
