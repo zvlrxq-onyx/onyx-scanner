@@ -4,7 +4,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 # ===================== META =====================
-VERSION = "6.6"
+VERSION = "6.7"
 HOME = os.path.expanduser("~/.onyx")
 RESULT_FILE = os.path.join(HOME, "last_result.json")
 
@@ -18,9 +18,96 @@ class C:
 LEVELS = ["INFO","LOW","MEDIUM","HIGH","CRITICAL"]
 REPORT = {k: [] for k in LEVELS}
 
+# ===================== PACKAGE MANAGER DETECTION =====================
+def detect_pkg_manager():
+    """Detect the system's package manager automatically."""
+    managers = [
+        # (binary_check, install_cmd_template, name)
+        ("pacman",   "sudo pacman -S --noconfirm {pkg}",        "pacman"),
+        ("apt",      "sudo apt install -y {pkg}",               "apt"),
+        ("apt-get",  "sudo apt-get install -y {pkg}",           "apt-get"),
+        ("dnf",      "sudo dnf install -y {pkg}",               "dnf"),
+        ("yum",      "sudo yum install -y {pkg}",               "yum"),
+        ("zypper",   "sudo zypper install -y {pkg}",            "zypper"),
+        ("emerge",   "sudo emerge {pkg}",                       "emerge"),
+        ("apk",      "sudo apk add {pkg}",                      "apk"),
+        ("brew",     "brew install {pkg}",                      "brew"),
+        ("xbps-install", "sudo xbps-install -y {pkg}",         "xbps"),
+        ("nix-env",  "nix-env -iA nixpkgs.{pkg}",              "nix"),
+        ("pkg",      "sudo pkg install -y {pkg}",               "pkg"),    # FreeBSD
+        ("pkg_add",  "sudo pkg_add {pkg}",                      "pkg_add"), # OpenBSD
+    ]
+    for bin_name, cmd_tpl, name in managers:
+        if shutil.which(bin_name):
+            return name, cmd_tpl
+    return None, None
+
+PKG_MANAGER_NAME, PKG_INSTALL_TPL = detect_pkg_manager()
+
+# Map of tool name -> package name per manager (when they differ)
+PKG_NAME_MAP = {
+    # tool_name : { manager_name: pkg_name }
+    "subfinder": {
+        "pacman": "subfinder",
+        "apt": "subfinder",
+        "dnf": "subfinder",
+        "default": "subfinder",
+    },
+    "httpx": {
+        "pacman": "httpx",
+        "apt": "httpx",
+        "dnf": "httpx",
+        "default": "httpx",
+    },
+    "sqlmap": {
+        "pacman": "sqlmap",
+        "apt": "sqlmap",
+        "dnf": "sqlmap",
+        "brew": "sqlmap",
+        "default": "sqlmap",
+    },
+    "nmap": {
+        "pacman": "nmap",
+        "apt": "nmap",
+        "dnf": "nmap",
+        "brew": "nmap",
+        "apk": "nmap",
+        "default": "nmap",
+    },
+    "nikto": {
+        "pacman": "nikto",
+        "apt": "nikto",
+        "dnf": "nikto",
+        "brew": "nikto",
+        "default": "nikto",
+    },
+    "nuclei": {
+        "pacman": "nuclei",
+        "apt": "nuclei",
+        "dnf": "nuclei",
+        "brew": "nuclei",
+        "default": "nuclei",
+    },
+}
+
+def get_install_cmd(tool_bin, fallback_cmd=None):
+    """
+    Return the best install command for a tool based on detected package manager.
+    Falls back to fallback_cmd if no package manager is found.
+    """
+    if PKG_MANAGER_NAME is None:
+        return fallback_cmd or f"# No package manager detected. Install {tool_bin} manually."
+
+    pkg = PKG_NAME_MAP.get(tool_bin, {}).get(PKG_MANAGER_NAME) \
+          or PKG_NAME_MAP.get(tool_bin, {}).get("default") \
+          or tool_bin
+
+    return PKG_INSTALL_TPL.format(pkg=pkg)
+
 # ===================== UI =====================
 def banner():
     os.system("clear")
+    pm_info = f"📦 Package Manager : {PKG_MANAGER_NAME or 'Not detected'}"
     print(C.CY + C.B + f"""
  ██████╗ ███╗   ██╗██╗   ██╗██╗  ██╗
 ██╔═══██╗████╗  ██║╚██╗ ██╔╝╚██╗██╔╝
@@ -32,6 +119,7 @@ def banner():
 ⚡ ONYX {VERSION} ⚡
 🔵 Advanced Web Security Scanner
 🛡 Authorized Security Testing Only
+{pm_info}
 """ + C.R)
 
     print(C.GR + """
@@ -54,7 +142,7 @@ def bar(title, duration=3.5):
     print("\n")
 
 # ===================== UTILS =====================
-def host(url): 
+def host(url):
     return urlparse(url).netloc
 
 def normalize_evidence(ev):
@@ -78,77 +166,106 @@ def add(level, title, detail, tool, cmd, evidence):
 def silent_bg(cmd):
     return subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-def ensure(binname, install_cmd):
+def ensure(binname, fallback_install_cmd=None):
+    """Check if a binary exists, offer to install it using the detected package manager."""
     if shutil.which(binname):
         return
-    ans = input(C.Y+f"[?] Install {binname}? [Y/n]: "+C.R).strip().lower()
-    if ans == "n": return
+
+    install_cmd = get_install_cmd(binname, fallback_install_cmd)
+
+    ans = input(C.Y + f"[?] '{binname}' not found. Install using: {install_cmd} ? [Y/n]: " + C.R).strip().lower()
+    if ans == "n":
+        return
     bar(f"Installing {binname}", 2)
     subprocess.call(install_cmd, shell=True)
 
 # ===================== SCANS =====================
 def scan_recon(url):
-    ensure("subfinder","sudo apt install -y subfinder")
-    ensure("httpx","sudo apt install -y httpx")
-    ensure("paramspider","pip install git+https://github.com/devanshbatham/ParamSpider.git")
+    ensure("subfinder")
+    ensure("httpx")
+    ensure("paramspider", "pip install git+https://github.com/devanshbatham/ParamSpider.git")
 
     bar("🌐 Recon Scan", 4)
     domain = host(url)
-    outdir = os.path.join(HOME,"recon")
-    os.makedirs(outdir,exist_ok=True)
+    outdir = os.path.join(HOME, "recon")
+    os.makedirs(outdir, exist_ok=True)
     subs = f"{outdir}/subs.txt"
     hosts = f"{outdir}/hosts.txt"
 
     silent_bg(f"subfinder -d {domain} -silent -o {subs}").wait()
     if os.path.exists(subs):
         data = open(subs).read().splitlines()
-        add("INFO","Subdomain Enumeration",f"{len(data)} subdomains found","subfinder","",data[:10])
+        add("INFO", "Subdomain Enumeration", f"{len(data)} subdomains found", "subfinder", "", data[:10])
 
     silent_bg(f"httpx -l {subs} -silent -o {hosts}").wait()
     if os.path.exists(hosts):
         data = open(hosts).read().splitlines()
-        add("INFO","Live Hosts Detection",f"{len(data)} live hosts found","httpx","",data[:10])
+        add("INFO", "Live Hosts Detection", f"{len(data)} live hosts found", "httpx", "", data[:10])
 
     silent_bg(f"paramspider -d {domain} -o {outdir}").wait()
-    add("INFO","Parameters Enumeration","Params collected using paramspider","paramspider","",[domain])
+    add("INFO", "Parameters Enumeration", "Params collected using paramspider", "paramspider", "", [domain])
 
 def scan_sql(url):
-    ensure("sqlmap","sudo apt install -y sqlmap")
-    bar("💉 SQL Injection Scan",5)
-    p = subprocess.Popen(f"sqlmap -u {url} --batch --level 5 --risk 3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    ensure("sqlmap")
+    bar("💉 SQL Injection Scan", 3)
+
+    # ─── Speed optimizations ───────────────────────────────────────────────
+    # --level 2 --risk 1  : balanced detection, way faster than 5/3
+    # --threads 5         : parallel requests
+    # --timeout 10        : don't hang on slow endpoints
+    # --smart             : skip heuristic-failing params
+    # --technique BEUSTQ  : try all techniques but exit early on first hit
+    # --stop-on-first     : stop testing other params once vuln found (sqlmap ≥1.7)
+    # ──────────────────────────────────────────────────────────────────────
+    cmd = (
+        f"sqlmap -u {url} --batch "
+        f"--level 2 --risk 1 "
+        f"--threads 5 --timeout 10 "
+        f"--smart --technique=BEUSTQ "
+        f"--stop-on-first"
+    )
+    findings = []
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     for line in p.stdout:
-        if "payload:" in line.lower():
-            add("CRITICAL","SQL Injection","Confirmed SQL Injection","sqlmap","",line.strip())
+        l = line.strip()
+        if any(kw in l.lower() for kw in ("payload:", "parameter", "is vulnerable", "injected")):
+            findings.append(l)
+            add("CRITICAL", "SQL Injection", "Confirmed SQL Injection", "sqlmap", cmd, l)
+    p.wait()
+
+    if not findings:
+        add("INFO", "SQL Injection Scan", "No SQLi detected with current settings", "sqlmap", cmd, [url])
 
 def scan_xss(url):
-    ensure("dalfox","go install github.com/hahwul/dalfox/v2@latest")
-    bar("🧪 XSS Scan",5)
+    ensure("dalfox", "go install github.com/hahwul/dalfox/v2@latest")
+    bar("🧪 XSS Scan", 5)
     cmd = f"dalfox url {url} --deep-domxss --mining-dom --mining-dict --follow-redirects --no-color"
-    p = subprocess.Popen(cmd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     for line in p.stdout:
         if "[v]" in line.lower() or "[poc]" in line.lower() or "triggered xss payload" in line.lower():
-            add("CRITICAL","Cross Site Scripting (XSS)",line.strip(),"dalfox","",line.strip())
+            add("CRITICAL", "Cross Site Scripting (XSS)", line.strip(), "dalfox", "", line.strip())
 
 def scan_web(url):
-    ensure("nmap","sudo apt install -y nmap")
-    ensure("nikto","sudo apt install -y nikto")
-    ensure("nuclei","sudo apt install -y nuclei")
-    bar("🕸 Web Scan",4)
+    ensure("nmap")
+    ensure("nikto")
+    ensure("nuclei")
+    bar("🕸 Web Scan", 4)
     silent_bg(f"nmap -Pn {host(url)}").wait()
     silent_bg(f"nikto -h {url}").wait()
     silent_bg(f"nuclei -u {url}").wait()
-    add("INFO","Web Scan Completed","Nmap/Nikto/Nuclei executed","webscan","",[url])
+    add("INFO", "Web Scan Completed", "Nmap/Nikto/Nuclei executed", "webscan", "", [url])
 
 # ===================== REPORT =====================
 def save(target):
-    os.makedirs(HOME,exist_ok=True)
-    with open(RESULT_FILE,"w") as f:
-        json.dump({"target":target,"time":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"report":REPORT},f,indent=2)
+    os.makedirs(HOME, exist_ok=True)
+    with open(RESULT_FILE, "w") as f:
+        json.dump({"target": target, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "report": REPORT}, f, indent=2)
 
 def show_result():
     banner()
     if not os.path.exists(RESULT_FILE):
-        print(C.RD+"No previous result."+C.R); return
+        print(C.RD + "No previous result." + C.R)
+        return
     d = json.load(open(RESULT_FILE))
     print(f"🎯 Target : {d['target']}")
     print(f"⏰ Time   : {d['time']}\n")
@@ -156,7 +273,7 @@ def show_result():
     for lvl in LEVELS:
         print(f"  {lvl:<9}: {len(d['report'][lvl])}")
     for lvl in LEVELS:
-        col = C.RD if lvl=="CRITICAL" else C.Y if lvl=="HIGH" else C.CY
+        col = C.RD if lvl == "CRITICAL" else C.Y if lvl == "HIGH" else C.CY
         for f in d["report"][lvl]:
             print(f"\n{col}{lvl}{C.R}")
             print(f" ├─ 📌 Finding : {f['title']}")
@@ -169,20 +286,22 @@ def show_result():
 def update():
     banner()
     p = silent_bg("bash -c 'curl -s https://raw.githubusercontent.com/zvlrxq-onyx/onyx-scanner/main/install.sh | bash >/dev/null 2>&1'")
-    bar("🚀 Updating ONYX",4.5)
+    bar("🚀 Updating ONYX", 4.5)
     p.wait()
-    print(C.G+"✔ ONYX updated successfully"+C.R)
+    print(C.G + "✔ ONYX updated successfully" + C.R)
     sys.exit(0)
 
 # ===================== HELP =====================
 def help_menu():
     banner()
-    print("""
+    print(f"""
 Usage:
   onyx                Start interactive mode
   onyx --help         Show this help
   onyx --update       Update ONYX framework
   onyx --result       Show last scan result
+
+Detected Package Manager: {PKG_MANAGER_NAME or 'None (manual install required)'}
 """)
 
 # ===================== MAIN =====================
@@ -192,12 +311,12 @@ def main():
     if "--result" in sys.argv: show_result(); return
 
     banner()
-    target = input(C.CY+"🌐 Enter Target URL ➜ "+C.R).strip()
+    target = input(C.CY + "🌐 Enter Target URL ➜ " + C.R).strip()
     if not target: return
 
     while True:
         banner()
-        print(C.CY+C.B+"""
+        print(C.CY + C.B + """
 ╔═════════════════════════════════════════════╗
 ║              🕷  ONYX SCAN MENU  🕷           ║
 ╠═════════════════════════════════════════════╣
@@ -210,25 +329,26 @@ def main():
 ║ [0] ❌ Exit                                 ║
 ╚═════════════════════════════════════════════╝
 """ + C.R)
-        choice = input(C.M+"ONYX ➜ "+C.R).strip()
+        choice = input(C.M + "ONYX ➜ " + C.R).strip()
         for k in REPORT: REPORT[k].clear()
 
-        if choice=="1": scan_recon(target)
-        elif choice=="2": scan_sql(target)
-        elif choice=="3": scan_xss(target)
-        elif choice=="4": scan_web(target)
-        elif choice=="5":
+        if choice == "1": scan_recon(target)
+        elif choice == "2": scan_sql(target)
+        elif choice == "3": scan_xss(target)
+        elif choice == "4": scan_web(target)
+        elif choice == "5":
             scan_recon(target); scan_sql(target)
             scan_xss(target); scan_web(target)
-        elif choice=="6":
+        elif choice == "6":
             show_result(); input("\nPress ENTER..."); continue
-        elif choice=="0":
-            print(C.G+"👋 Bye bro, stay legal!"+C.R); break
-        else: continue
+        elif choice == "0":
+            print(C.G + "👋 Bye bro, stay legal!" + C.R); break
+        else:
+            continue
 
         save(target)
         show_result()
-        input(C.Y+"\nPress ENTER to return menu..."+C.R)
+        input(C.Y + "\nPress ENTER to return menu..." + C.R)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
