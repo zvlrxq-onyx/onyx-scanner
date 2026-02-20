@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-import os, sys, time, json, shutil, subprocess
+import os, sys, time, json, shutil, subprocess, threading
 from datetime import datetime
 from urllib.parse import urlparse
 
 # ===================== META =====================
-VERSION = "6.7"
+VERSION = "6.8"
 HOME = os.path.expanduser("~/.onyx")
 RESULT_FILE = os.path.join(HOME, "last_result.json")
 
@@ -20,22 +20,20 @@ REPORT = {k: [] for k in LEVELS}
 
 # ===================== PACKAGE MANAGER DETECTION =====================
 def detect_pkg_manager():
-    """Detect the system's package manager automatically."""
     managers = [
-        # (binary_check, install_cmd_template, name)
-        ("pacman",   "sudo pacman -S --noconfirm {pkg}",        "pacman"),
-        ("apt",      "sudo apt install -y {pkg}",               "apt"),
-        ("apt-get",  "sudo apt-get install -y {pkg}",           "apt-get"),
-        ("dnf",      "sudo dnf install -y {pkg}",               "dnf"),
-        ("yum",      "sudo yum install -y {pkg}",               "yum"),
-        ("zypper",   "sudo zypper install -y {pkg}",            "zypper"),
-        ("emerge",   "sudo emerge {pkg}",                       "emerge"),
-        ("apk",      "sudo apk add {pkg}",                      "apk"),
-        ("brew",     "brew install {pkg}",                      "brew"),
-        ("xbps-install", "sudo xbps-install -y {pkg}",         "xbps"),
-        ("nix-env",  "nix-env -iA nixpkgs.{pkg}",              "nix"),
-        ("pkg",      "sudo pkg install -y {pkg}",               "pkg"),    # FreeBSD
-        ("pkg_add",  "sudo pkg_add {pkg}",                      "pkg_add"), # OpenBSD
+        ("pacman",       "sudo pacman -S --noconfirm {pkg}",  "pacman"),
+        ("apt",          "sudo apt install -y {pkg}",         "apt"),
+        ("apt-get",      "sudo apt-get install -y {pkg}",     "apt-get"),
+        ("dnf",          "sudo dnf install -y {pkg}",         "dnf"),
+        ("yum",          "sudo yum install -y {pkg}",         "yum"),
+        ("zypper",       "sudo zypper install -y {pkg}",      "zypper"),
+        ("emerge",       "sudo emerge {pkg}",                 "emerge"),
+        ("apk",          "sudo apk add {pkg}",                "apk"),
+        ("brew",         "brew install {pkg}",                "brew"),
+        ("xbps-install", "sudo xbps-install -y {pkg}",       "xbps"),
+        ("nix-env",      "nix-env -iA nixpkgs.{pkg}",        "nix"),
+        ("pkg",          "sudo pkg install -y {pkg}",         "pkg"),
+        ("pkg_add",      "sudo pkg_add {pkg}",                "pkg_add"),
     ]
     for bin_name, cmd_tpl, name in managers:
         if shutil.which(bin_name):
@@ -44,82 +42,28 @@ def detect_pkg_manager():
 
 PKG_MANAGER_NAME, PKG_INSTALL_TPL = detect_pkg_manager()
 
-# Map of tool name -> package name per manager (when they differ)
 PKG_NAME_MAP = {
-    # tool_name : { manager_name: pkg_name }
-    "go": {
-        "pacman": "go",
-        "apt": "golang",
-        "apt-get": "golang",
-        "dnf": "golang",
-        "yum": "golang",
-        "zypper": "go",
-        "apk": "go",
-        "brew": "go",
-        "emerge": "dev-lang/go",
-        "default": "golang",
-    },
-    "subfinder": {
-        "pacman": "subfinder",
-        "apt": "subfinder",
-        "dnf": "subfinder",
-        "default": "subfinder",
-    },
-    "httpx": {
-        "pacman": "httpx",
-        "apt": "httpx",
-        "dnf": "httpx",
-        "default": "httpx",
-    },
-    "sqlmap": {
-        "pacman": "sqlmap",
-        "apt": "sqlmap",
-        "dnf": "sqlmap",
-        "brew": "sqlmap",
-        "default": "sqlmap",
-    },
-    "nmap": {
-        "pacman": "nmap",
-        "apt": "nmap",
-        "dnf": "nmap",
-        "brew": "nmap",
-        "apk": "nmap",
-        "default": "nmap",
-    },
-    "nikto": {
-        "pacman": "nikto",
-        "apt": "nikto",
-        "dnf": "nikto",
-        "brew": "nikto",
-        "default": "nikto",
-    },
-    "nuclei": {
-        "pacman": "nuclei",
-        "apt": "nuclei",
-        "dnf": "nuclei",
-        "brew": "nuclei",
-        "default": "nuclei",
-    },
+    "go":       {"pacman":"go","apt":"golang","apt-get":"golang","dnf":"golang","yum":"golang","zypper":"go","apk":"go","brew":"go","emerge":"dev-lang/go","default":"golang"},
+    "subfinder":{"pacman":"subfinder","apt":"subfinder","dnf":"subfinder","default":"subfinder"},
+    "httpx":    {"pacman":"httpx","apt":"httpx","dnf":"httpx","default":"httpx"},
+    "sqlmap":   {"pacman":"sqlmap","apt":"sqlmap","dnf":"sqlmap","brew":"sqlmap","default":"sqlmap"},
+    "nmap":     {"pacman":"nmap","apt":"nmap","dnf":"nmap","brew":"nmap","apk":"nmap","default":"nmap"},
+    "nikto":    {"pacman":"nikto","apt":"nikto","dnf":"nikto","brew":"nikto","default":"nikto"},
+    "nuclei":   {"pacman":"nuclei","apt":"nuclei","dnf":"nuclei","brew":"nuclei","default":"nuclei"},
 }
 
 def get_install_cmd(tool_bin, fallback_cmd=None):
-    """
-    Return the best install command for a tool based on detected package manager.
-    Falls back to fallback_cmd if no package manager is found.
-    """
     if PKG_MANAGER_NAME is None:
         return fallback_cmd or f"# No package manager detected. Install {tool_bin} manually."
-
     pkg = PKG_NAME_MAP.get(tool_bin, {}).get(PKG_MANAGER_NAME) \
           or PKG_NAME_MAP.get(tool_bin, {}).get("default") \
           or tool_bin
-
     return PKG_INSTALL_TPL.format(pkg=pkg)
 
 # ===================== UI =====================
 def banner():
     os.system("clear")
-    pm_info = f"📦 Package Manager : {PKG_MANAGER_NAME or 'Not detected'}"
+    pm_info = f"Package Manager : {PKG_MANAGER_NAME or 'Not detected'}"
     print(C.CY + C.B + f"""
  ██████╗ ███╗   ██╗██╗   ██╗██╗  ██╗
 ██╔═══██╗████╗  ██║╚██╗ ██╔╝╚██╗██╔╝
@@ -131,9 +75,8 @@ def banner():
 ⚡ ONYX {VERSION} ⚡
 🔵 Advanced Web Security Scanner
 🛡 Authorized Security Testing Only
-{pm_info}
+📦 {pm_info}
 """ + C.R)
-
     print(C.GR + """
 [ DISCLAIMER ]
 ONYX is designed for authorized security testing only.
@@ -144,34 +87,59 @@ Use responsibly. Stay legal. Stay sharp.
 """ + C.R)
 
 def bar(title, duration=3.5):
+    """Fake progress bar hanya untuk install/update."""
     print(C.M + f"⚙ {title}" + C.R)
     total = 40
-    for i in range(total+1):
-        pct = int(i/total*100)
+    for i in range(total + 1):
+        pct = int(i / total * 100)
         sys.stdout.write(f"\r{C.CY}[{'█'*i}{'░'*(total-i)}] {pct:3d}%{C.R}")
         sys.stdout.flush()
-        time.sleep(duration/total)
+        time.sleep(duration / total)
     print("\n")
+
+def scan_bar(title, stop_event, est=60):
+    """
+    Progress bar yang jalan pelan sambil scan kerja di background.
+    - Naik 0% → 95% selama est detik
+    - Begitu stop_event di-set (scan selesai), langsung lompat ke 100%
+    """
+    total = 40
+    print(C.M + f"⚙ {title}" + C.R)
+    i = 0
+    target_95 = int(total * 0.95)
+    tick = est / target_95
+
+    while i < target_95 and not stop_event.is_set():
+        pct = int(i / total * 100)
+        sys.stdout.write(f"\r{C.CY}[{chr(9608)*i}{chr(9617)*(total-i)}] {pct:3d}%{C.R}")
+        sys.stdout.flush()
+        time.sleep(tick)
+        i += 1
+
+    while i <= total:
+        pct = int(i / total * 100)
+        sys.stdout.write(f"\r{C.CY}[{chr(9608)*i}{chr(9617)*(total-i)}] {pct:3d}%{C.R}")
+        sys.stdout.flush()
+        time.sleep(0.02)
+        i += 1
+
+    sys.stdout.write(f"\r{C.G}[{chr(9608)*total}] 100% ✔ Selesai!{C.R}          \n\n")
+    sys.stdout.flush()
 
 # ===================== UTILS =====================
 def host(url):
     return urlparse(url).netloc
 
 def normalize_evidence(ev):
-    if ev is None:
-        return []
-    if isinstance(ev, str):
-        return [ev.strip()]
-    if isinstance(ev, list):
-        return [x.strip() for x in ev if isinstance(x, str)]
+    if ev is None: return []
+    if isinstance(ev, str): return [ev.strip()]
+    if isinstance(ev, list): return [x.strip() for x in ev if isinstance(x, str)]
     return []
 
 def add(level, title, detail, tool, cmd, evidence):
     REPORT[level].append({
-        "title": title,
-        "detail": detail,
-        "tool": tool,
-        "cmd": cmd,
+        "title": title, "detail": detail,
+        "tool": tool, "cmd": cmd,
         "evidence": normalize_evidence(evidence)
     })
 
@@ -179,16 +147,10 @@ def silent_bg(cmd):
     return subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def _symlink_to_path(binname):
-    """
-    After go/pip install, the binary may land in ~/go/bin or ~/.local/bin
-    but not be in $PATH yet. Try to symlink it to /usr/local/bin so it's
-    globally callable from any terminal session.
-    """
     candidates = [
         os.path.expanduser(f"~/go/bin/{binname}"),
         os.path.expanduser(f"~/.local/bin/{binname}"),
         os.path.expanduser(f"~/.local/pipx/venvs/{binname}/bin/{binname}"),
-        # go install with custom GOPATH
         os.path.join(os.environ.get("GOPATH", ""), f"bin/{binname}"),
     ]
     for src in candidates:
@@ -198,137 +160,69 @@ def _symlink_to_path(binname):
                 subprocess.call(f"sudo ln -sf {src} {dest}", shell=True)
                 print(C.G + f"✔ Linked {src} → {dest}" + C.R)
             except Exception:
-                print(C.Y + f"⚠ Could not symlink. Add {os.path.dirname(src)} to your PATH manually." + C.R)
+                print(C.Y + f"⚠ Gagal symlink. Tambahkan {os.path.dirname(src)} ke PATH." + C.R)
             return True
     return False
 
 def ensure_go_tool(binname, go_pkg):
-    """
-    Install a Go-based tool globally so it's callable from any terminal.
-    Steps:
-      1. Check if binary already exists in PATH
-      2. Check if Go is installed; if not, install via pkg manager
-      3. Run: go install <go_pkg>
-      4. Symlink the binary from ~/go/bin → /usr/local/bin
-    """
-    if shutil.which(binname):
-        return  # already available globally
-
-    print(C.Y + f"[!] '{binname}' not found." + C.R)
+    if shutil.which(binname): return
+    print(C.Y + f"[!] '{binname}' tidak ditemukan." + C.R)
     ans = input(C.Y + f"[?] Install via Go? (go install {go_pkg}) [Y/n]: " + C.R).strip().lower()
-    if ans == "n":
-        return
-
-    # Make sure Go is installed
+    if ans == "n": return
     if not shutil.which("go"):
-        print(C.Y + "[!] Go not found. Installing Go first..." + C.R)
-        go_install_cmd = get_install_cmd("go", "sudo apt install -y golang")
-        subprocess.call(go_install_cmd, shell=True)
+        print(C.Y + "[!] Go tidak ditemukan. Menginstall Go dulu..." + C.R)
+        subprocess.call(get_install_cmd("go", "sudo apt install -y golang"), shell=True)
         if not shutil.which("go"):
-            print(C.RD + "✘ Go installation failed. Install Go manually: https://go.dev/dl/" + C.R)
+            print(C.RD + "✘ Gagal install Go. Install manual: https://go.dev/dl/" + C.R)
             return
-
     bar(f"Installing {binname} via Go", 3)
-
-    # Set GOPATH explicitly so we know where the binary lands
     gopath = os.environ.get("GOPATH", os.path.expanduser("~/go"))
     env = os.environ.copy()
     env["GOPATH"] = gopath
     env["PATH"] = f"{gopath}/bin:" + env.get("PATH", "")
-
     ret = subprocess.call(f"go install {go_pkg}", shell=True, env=env)
     if ret != 0:
-        print(C.RD + f"✘ Failed to install {binname}." + C.R)
-        return
-
-    # Symlink so it's globally available
+        print(C.RD + f"✘ Gagal install {binname}." + C.R); return
     if not _symlink_to_path(binname):
-        # fallback: tell user to add to PATH
-        print(C.Y + f"⚠ Add {gopath}/bin to your PATH:\n  export PATH=$PATH:{gopath}/bin" + C.R)
+        print(C.Y + f"⚠ Tambahkan ke PATH:\n  export PATH=$PATH:{gopath}/bin" + C.R)
     else:
-        print(C.G + f"✔ {binname} installed and globally available!" + C.R)
+        print(C.G + f"✔ {binname} siap dipakai global!" + C.R)
 
 def _in_virtualenv():
-    """Return True if Python is running inside a virtualenv or venv."""
     return (
         os.environ.get("VIRTUAL_ENV") is not None
-        or getattr(sys, "real_prefix", None) is not None           # virtualenv
-        or (getattr(sys, "base_prefix", sys.prefix) != sys.prefix) # venv / conda
+        or getattr(sys, "real_prefix", None) is not None
+        or (getattr(sys, "base_prefix", sys.prefix) != sys.prefix)
     )
 
 def ensure_pip_tool(binname, pip_pkg_or_url):
-    """
-    Install a Python-based CLI tool via pip so it's callable globally.
-    Priority order:
-      1. pipx  — cleanest, auto-handles PATH, works inside/outside venv
-      2. pip (no --user) — when inside a virtualenv
-      3. pip --user — standard user install outside venv
-      4. pip --break-system-packages — for system Python on Debian/Ubuntu 23+
-    Then symlinks the binary to /usr/local/bin for global access.
-    """
-    if shutil.which(binname):
-        return  # already available
-
-    print(C.Y + f"[!] '{binname}' not found." + C.R)
+    if shutil.which(binname): return
+    print(C.Y + f"[!] '{binname}' tidak ditemukan." + C.R)
     ans = input(C.Y + f"[?] Install via pip? (pip install {pip_pkg_or_url}) [Y/n]: " + C.R).strip().lower()
-    if ans == "n":
-        return
-
+    if ans == "n": return
     bar(f"Installing {binname} via pip", 2)
-
     in_venv = _in_virtualenv()
-
-    # ── Strategy 1: pipx (best option, works everywhere) ─────────────────
     if shutil.which("pipx"):
         ret = subprocess.call(f"pipx install '{pip_pkg_or_url}'", shell=True)
         if ret == 0:
-            _symlink_to_path(binname)
-            print(C.G + f"✔ {binname} installed via pipx and globally available!" + C.R)
-            return
-
-    # ── Strategy 2: inside virtualenv → plain pip install (no --user) ────
+            _symlink_to_path(binname); print(C.G + f"✔ {binname} installed via pipx!" + C.R); return
     if in_venv:
         ret = subprocess.call(f"pip install '{pip_pkg_or_url}'", shell=True)
         if ret == 0:
-            _symlink_to_path(binname)
-            print(C.G + f"✔ {binname} installed inside venv." + C.R)
-            return
-
-    # ── Strategy 3: pip --user (standard outside venv) ───────────────────
+            _symlink_to_path(binname); print(C.G + f"✔ {binname} installed!" + C.R); return
     ret = subprocess.call(f"pip install --user '{pip_pkg_or_url}'", shell=True)
     if ret == 0:
-        _symlink_to_path(binname)
-        print(C.G + f"✔ {binname} installed globally!" + C.R)
-        return
-
-    # ── Strategy 4: system Python with PEP 668 restriction (Debian/Ubuntu 23+)
-    ret = subprocess.call(
-        f"pip install --break-system-packages '{pip_pkg_or_url}'",
-        shell=True
-    )
+        _symlink_to_path(binname); print(C.G + f"✔ {binname} installed!" + C.R); return
+    ret = subprocess.call(f"pip install --break-system-packages '{pip_pkg_or_url}'", shell=True)
     if ret == 0:
-        _symlink_to_path(binname)
-        print(C.G + f"✔ {binname} installed with --break-system-packages!" + C.R)
-        return
-
-    # ── All strategies failed ─────────────────────────────────────────────
-    print(C.RD + f"✘ Failed to install {binname}. Try manually:" + C.R)
-    print(C.Y + f"  pipx install '{pip_pkg_or_url}'" + C.R)
-    print(C.Y + f"  or: pip install '{pip_pkg_or_url}'" + C.R)
+        _symlink_to_path(binname); print(C.G + f"✔ {binname} installed!" + C.R); return
+    print(C.RD + f"✘ Semua strategi gagal. Coba manual: pipx install '{pip_pkg_or_url}'" + C.R)
 
 def ensure(binname, fallback_install_cmd=None):
-    """
-    Install a system package using the detected package manager.
-    Use ensure_go_tool() for Go binaries, ensure_pip_tool() for Python CLIs.
-    """
-    if shutil.which(binname):
-        return
-
+    if shutil.which(binname): return
     install_cmd = get_install_cmd(binname, fallback_install_cmd)
-
-    ans = input(C.Y + f"[?] '{binname}' not found. Install using: {install_cmd} ? [Y/n]: " + C.R).strip().lower()
-    if ans == "n":
-        return
+    ans = input(C.Y + f"[?] '{binname}' tidak ada. Install: {install_cmd} ? [Y/n]: " + C.R).strip().lower()
+    if ans == "n": return
     bar(f"Installing {binname}", 2)
     subprocess.call(install_cmd, shell=True)
 
@@ -338,38 +232,33 @@ def scan_recon(url):
     ensure("httpx")
     ensure_pip_tool("paramspider", "git+https://github.com/devanshbatham/ParamSpider.git")
 
-    bar("🌐 Recon Scan", 4)
     domain = host(url)
     outdir = os.path.join(HOME, "recon")
     os.makedirs(outdir, exist_ok=True)
-    subs = f"{outdir}/subs.txt"
-    hosts = f"{outdir}/hosts.txt"
+    subs  = f"{outdir}/subs.txt"
+    lhosts = f"{outdir}/hosts.txt"
+
+    stop = threading.Event()
+    spinner_t = threading.Thread(target=scan_bar, args=("🌐 Recon Scan", stop, 30))
+    spinner_t.start()
 
     silent_bg(f"subfinder -d {domain} -silent -o {subs}").wait()
     if os.path.exists(subs):
+        silent_bg(f"httpx -l {subs} -silent -o {lhosts}").wait()
+        silent_bg(f"paramspider -d {domain} -o {outdir}").wait()
+
+    stop.set(); spinner_t.join()
+
+    if os.path.exists(subs):
         data = open(subs).read().splitlines()
-        add("INFO", "Subdomain Enumeration", f"{len(data)} subdomains found", "subfinder", "", data[:10])
-
-    silent_bg(f"httpx -l {subs} -silent -o {hosts}").wait()
-    if os.path.exists(hosts):
-        data = open(hosts).read().splitlines()
-        add("INFO", "Live Hosts Detection", f"{len(data)} live hosts found", "httpx", "", data[:10])
-
-    silent_bg(f"paramspider -d {domain} -o {outdir}").wait()
-    add("INFO", "Parameters Enumeration", "Params collected using paramspider", "paramspider", "", [domain])
+        add("INFO", "Subdomain Enumeration", f"{len(data)} subdomain ditemukan", "subfinder", "", data[:10])
+    if os.path.exists(lhosts):
+        data = open(lhosts).read().splitlines()
+        add("INFO", "Live Hosts Detection", f"{len(data)} live host", "httpx", "", data[:10])
+    add("INFO", "Parameters Enumeration", "Params dikumpulkan via paramspider", "paramspider", "", [domain])
 
 def scan_sql(url):
     ensure("sqlmap")
-    bar("💉 SQL Injection Scan", 3)
-
-    # ─── Speed optimizations ───────────────────────────────────────────────
-    # --level 2 --risk 1  : balanced detection, way faster than 5/3
-    # --threads 5         : parallel requests
-    # --timeout 10        : don't hang on slow endpoints
-    # --smart             : skip heuristic-failing params
-    # --technique BEUSTQ  : try all techniques but exit early on first hit
-    # --stop-on-first     : stop testing other params once vuln found (sqlmap ≥1.7)
-    # ──────────────────────────────────────────────────────────────────────
     cmd = (
         f"sqlmap -u {url} --batch "
         f"--level 2 --risk 1 "
@@ -378,111 +267,131 @@ def scan_sql(url):
         f"--stop-on-first"
     )
     findings = []
+
+    stop = threading.Event()
+    spinner_t = threading.Thread(target=scan_bar, args=("💉 SQL Injection Scan", stop, 45))
+    spinner_t.start()
+
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     for line in p.stdout:
         l = line.strip()
-        if any(kw in l.lower() for kw in ("payload:", "parameter", "is vulnerable", "injected")):
+        if any(kw in l.lower() for kw in ("payload:", "is vulnerable", "injected", "back-end dbms")):
             findings.append(l)
-            add("CRITICAL", "SQL Injection", "Confirmed SQL Injection", "sqlmap", cmd, l)
     p.wait()
 
-    if not findings:
-        add("INFO", "SQL Injection Scan", "No SQLi detected with current settings", "sqlmap", cmd, [url])
+    stop.set(); spinner_t.join()
+
+    if findings:
+        for f in findings:
+            add("CRITICAL", "SQL Injection", "Confirmed SQL Injection", "sqlmap", cmd, f)
+    else:
+        add("INFO", "SQL Injection Scan", "Tidak ada SQLi terdeteksi", "sqlmap", cmd, [url])
 
 def scan_xss(url):
     ensure_go_tool("dalfox", "github.com/hahwul/dalfox/v2@latest")
-    bar("🧪 XSS Scan", 5)
     cmd = f"dalfox url {url} --deep-domxss --mining-dom --mining-dict --follow-redirects --no-color"
+    findings = []
+
+    stop = threading.Event()
+    spinner_t = threading.Thread(target=scan_bar, args=("🧪 XSS Scan", stop, 40))
+    spinner_t.start()
+
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     for line in p.stdout:
         if "[v]" in line.lower() or "[poc]" in line.lower() or "triggered xss payload" in line.lower():
-            add("CRITICAL", "Cross Site Scripting (XSS)", line.strip(), "dalfox", "", line.strip())
+            findings.append(line.strip())
+    p.wait()
+
+    stop.set(); spinner_t.join()
+
+    if findings:
+        for f in findings:
+            add("CRITICAL", "Cross Site Scripting (XSS)", f, "dalfox", cmd, f)
+    else:
+        add("INFO", "XSS Scan", "Tidak ada XSS terdeteksi", "dalfox", cmd, [url])
 
 def scan_web(url):
-    import threading
     ensure("nmap")
     ensure("nikto")
     ensure("nuclei")
-    bar("🕸 Web Scan", 2)
 
     target_host = host(url)
 
-    # ── Semua tool jalan PARALLEL, bukan satu-satu ───────────────────────
-    # nmap  : -T4 timing agresif, top 1000 port, skip DNS reverse lookup
-    # nikto : -maxtime 120 berhenti otomatis setelah 2 menit
-    # nuclei: -rl 50 rate limit, -timeout 10 per request, hanya severity penting
-    # ─────────────────────────────────────────────────────────────────────
+    # ── Spinner jalan di thread sendiri ──────────────────────────────────
+    stop = threading.Event()
+    spinner_t = threading.Thread(target=scan_bar, args=("🕸 Web Vulnerability Scan", stop, 90))
+    spinner_t.start()
+
+    # ── Ketiga tool jalan PARALLEL ────────────────────────────────────────
     procs = {
         "nmap": subprocess.Popen(
             f"nmap -Pn -T4 -n --top-ports 1000 {target_host}",
             shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
         ),
         "nikto": subprocess.Popen(
-            f"nikto -h {url} -maxtime 120 -nointeractive",
+            f"nikto -h {url} -maxtime 90 -nointeractive",
             shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
         ),
         "nuclei": subprocess.Popen(
-            f"nuclei -u {url} -timeout 10 -rl 50 -severity low,medium,high,critical -silent",
+            f"nuclei -u {url} -timeout 8 -rl 100 -severity low,medium,high,critical -silent",
             shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
         ),
     }
 
-    findings = {k: [] for k in procs}
+    tool_output = {k: [] for k in procs}
 
     def collect(name, proc):
         try:
-            out, _ = proc.communicate(timeout=180)  # max 3 menit per tool
-            findings[name] = [l.strip() for l in out.splitlines() if l.strip()]
+            out, _ = proc.communicate(timeout=150)
+            tool_output[name] = [l.strip() for l in out.splitlines() if l.strip()]
         except subprocess.TimeoutExpired:
             proc.kill()
-            findings[name] = ["[timeout] scan melebihi 3 menit, dihentikan"]
+            tool_output[name] = ["[timeout] scan dihentikan setelah 2.5 menit"]
 
-    threads = [threading.Thread(target=collect, args=(n, p)) for n, p in procs.items()]
-    for t in threads: t.start()
-    for t in threads: t.join()  # tunggu semua selesai BERSAMAAN
+    collectors = [threading.Thread(target=collect, args=(n, p)) for n, p in procs.items()]
+    for c in collectors: c.start()
+    for c in collectors: c.join()
 
-    # ── Parse nmap ────────────────────────────────────────────────────────
-    open_ports = [l for l in findings["nmap"] if "open" in l.lower()]
+    stop.set(); spinner_t.join()
+
+    # ── Parse hasil ───────────────────────────────────────────────────────
+    open_ports = [l for l in tool_output["nmap"] if "open" in l.lower()]
     if open_ports:
-        add("INFO", "Open Ports (Nmap)", f"{len(open_ports)} port terbuka ditemukan",
-            "nmap", "", open_ports[:20])
+        add("INFO", "Open Ports (Nmap)", f"{len(open_ports)} port terbuka", "nmap", "", open_ports[:20])
     else:
-        add("INFO", "Open Ports (Nmap)", "Tidak ada port terbuka atau scan timeout",
-            "nmap", "", findings["nmap"][:5])
+        add("INFO", "Open Ports (Nmap)", "Tidak ada port terbuka / timeout", "nmap", "", tool_output["nmap"][:5])
 
-    # ── Parse nikto ───────────────────────────────────────────────────────
-    nikto_hits = [l for l in findings["nikto"] if l.startswith("+")]
+    nikto_hits = [l for l in tool_output["nikto"] if l.startswith("+")]
     if nikto_hits:
         for hit in nikto_hits[:15]:
-            sev = "HIGH" if any(k in hit.lower() for k in (
-                "injection", "xss", "rce", "exec", "upload", "bypass"
-            )) else "MEDIUM"
+            sev = "HIGH" if any(k in hit.lower() for k in ("injection","xss","rce","exec","upload","bypass")) else "MEDIUM"
             add(sev, "Nikto Finding", hit, "nikto", "", [hit])
     else:
-        add("INFO", "Nikto Scan", "Tidak ada temuan atau timeout", "nikto", "", [url])
+        add("INFO", "Nikto Scan", "Tidak ada temuan / timeout", "nikto", "", [url])
 
-    # ── Parse nuclei ──────────────────────────────────────────────────────
-    nuclei_hits = [l for l in findings["nuclei"] if l]
-    if nuclei_hits:
-        for hit in nuclei_hits[:15]:
+    if tool_output["nuclei"]:
+        for hit in tool_output["nuclei"][:15]:
             sev = "CRITICAL" if "critical" in hit.lower() else \
                   "HIGH"     if "high"     in hit.lower() else \
                   "MEDIUM"   if "medium"   in hit.lower() else "LOW"
             add(sev, "Nuclei Finding", hit, "nuclei", "", [hit])
     else:
-        add("INFO", "Nuclei Scan", "Tidak ada temuan atau timeout", "nuclei", "", [url])
+        add("INFO", "Nuclei Scan", "Tidak ada temuan / timeout", "nuclei", "", [url])
 
 # ===================== REPORT =====================
 def save(target):
     os.makedirs(HOME, exist_ok=True)
     with open(RESULT_FILE, "w") as f:
-        json.dump({"target": target, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "report": REPORT}, f, indent=2)
+        json.dump({
+            "target": target,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "report": REPORT
+        }, f, indent=2)
 
 def show_result():
     banner()
     if not os.path.exists(RESULT_FILE):
-        print(C.RD + "No previous result." + C.R)
-        return
+        print(C.RD + "Belum ada hasil scan." + C.R); return
     d = json.load(open(RESULT_FILE))
     print(f"🎯 Target : {d['target']}")
     print(f"⏰ Time   : {d['time']}\n")
@@ -523,7 +432,7 @@ Detected Package Manager: {PKG_MANAGER_NAME or 'None (manual install required)'}
 
 # ===================== MAIN =====================
 def main():
-    if "--help" in sys.argv: help_menu(); return
+    if "--help"   in sys.argv: help_menu(); return
     if "--update" in sys.argv: update()
     if "--result" in sys.argv: show_result(); return
 
@@ -549,13 +458,13 @@ def main():
         choice = input(C.M + "ONYX ➜ " + C.R).strip()
         for k in REPORT: REPORT[k].clear()
 
-        if choice == "1": scan_recon(target)
+        if   choice == "1": scan_recon(target)
         elif choice == "2": scan_sql(target)
         elif choice == "3": scan_xss(target)
         elif choice == "4": scan_web(target)
         elif choice == "5":
             scan_recon(target); scan_sql(target)
-            scan_xss(target); scan_web(target)
+            scan_xss(target);   scan_web(target)
         elif choice == "6":
             show_result(); input("\nPress ENTER..."); continue
         elif choice == "0":
